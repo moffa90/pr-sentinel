@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/moffa90/pr-sentinel/internal/commands"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +26,15 @@ var versionCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(commands.NewInitCmd())
+	rootCmd.AddCommand(commands.NewStartCmd())
+	rootCmd.AddCommand(commands.NewStopCmd())
+	rootCmd.AddCommand(commands.NewStatusCmd())
+	rootCmd.AddCommand(commands.NewReviewCmd())
+	rootCmd.AddCommand(commands.NewReposCmd())
+	rootCmd.AddCommand(commands.NewPromoteCmd())
+	rootCmd.AddCommand(commands.NewDemoteCmd())
+	rootCmd.AddCommand(commands.NewLogsCmd())
 }
 
 func main() {
