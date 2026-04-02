@@ -214,6 +214,9 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 			cycleCount++
 			dailyCount++
 		}
+
+		// Detect closed PRs: check tracked PRs not in the open list
+		detectClosedPRs(store, repo.Name, prs, followUpCandidates)
 	}
 
 	slog.Debug("work items collected", "items", len(work))
@@ -376,6 +379,48 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 	)
 
 	return result
+}
+
+// detectClosedPRs checks if any tracked PRs in the DB are no longer open.
+// Uses gh pr view to safely confirm closure (avoids false positives from pagination).
+func detectClosedPRs(store *state.Store, repo string, openPRs []github.PullRequest, followUps []github.FollowUpCandidate) {
+	tracked, err := store.TrackedOpenPRNumbers(repo)
+	if err != nil {
+		slog.Error("failed to get tracked PRs", "repo", repo, "error", err)
+		return
+	}
+	if len(tracked) == 0 {
+		return
+	}
+
+	// Build set of open PR numbers (from both new PRs and follow-up candidates)
+	open := make(map[int64]struct{})
+	for _, pr := range openPRs {
+		open[pr.Number] = struct{}{}
+	}
+	for _, fu := range followUps {
+		open[fu.Number] = struct{}{}
+	}
+
+	for _, prNum := range tracked {
+		if _, isOpen := open[prNum]; isOpen {
+			continue
+		}
+
+		// PR not in open list — confirm via gh pr view before marking
+		prState, err := github.GetPRState(repo, prNum)
+		if err != nil {
+			slog.Debug("could not check PR state", "repo", repo, "pr", prNum, "error", err)
+			continue
+		}
+
+		if prState == "MERGED" || prState == "CLOSED" {
+			slog.Info("PR closed", "repo", repo, "pr", prNum, "state", prState)
+			if err := store.MarkPRClosed(repo, prNum); err != nil {
+				slog.Error("failed to mark PR closed", "repo", repo, "pr", prNum, "error", err)
+			}
+		}
+	}
 }
 
 // RunDaemon starts the poll loop. It runs a cycle immediately, then on every

@@ -131,6 +131,58 @@ func TestMultipleReviewsPreserved(t *testing.T) {
 	}
 }
 
+func TestMarkPRClosed(t *testing.T) {
+	s := newTestStore(t)
+
+	s.RecordReview(ReviewRecord{
+		Repo:       "owner/repo",
+		PRNumber:   10,
+		PRTitle:    "open PR",
+		ReviewedAt: time.Now().UTC(),
+	})
+	s.RecordReview(ReviewRecord{
+		Repo:       "owner/repo",
+		PRNumber:   20,
+		PRTitle:    "another PR",
+		ReviewedAt: time.Now().UTC(),
+	})
+
+	// Both should be tracked as open
+	tracked, err := s.TrackedOpenPRNumbers("owner/repo")
+	if err != nil {
+		t.Fatalf("TrackedOpenPRNumbers: %v", err)
+	}
+	if len(tracked) != 2 {
+		t.Fatalf("expected 2 tracked PRs, got %d", len(tracked))
+	}
+
+	// Mark PR #10 as closed
+	if err := s.MarkPRClosed("owner/repo", 10); err != nil {
+		t.Fatalf("MarkPRClosed: %v", err)
+	}
+
+	// Only PR #20 should be tracked now
+	tracked, err = s.TrackedOpenPRNumbers("owner/repo")
+	if err != nil {
+		t.Fatalf("TrackedOpenPRNumbers after close: %v", err)
+	}
+	if len(tracked) != 1 {
+		t.Fatalf("expected 1 tracked PR, got %d", len(tracked))
+	}
+	if tracked[0] != 20 {
+		t.Errorf("expected PR #20, got #%d", tracked[0])
+	}
+
+	// HasReviewed still returns true for closed PR
+	reviewed, err := s.HasReviewed("owner/repo", 10)
+	if err != nil {
+		t.Fatalf("HasReviewed: %v", err)
+	}
+	if !reviewed {
+		t.Error("expected HasReviewed=true even for closed PR")
+	}
+}
+
 func TestDailyCount(t *testing.T) {
 	s := newTestStore(t)
 	date := "2026-04-01"

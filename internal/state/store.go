@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS reviewed_prs (
 	mode             TEXT    NOT NULL DEFAULT '',
 	posted           INTEGER NOT NULL DEFAULT 0,
 	cost_usd         REAL    NOT NULL DEFAULT 0,
+	closed_at        TEXT    NOT NULL DEFAULT '',
 	reviewed_at      TEXT    NOT NULL
 );
 
@@ -100,7 +101,12 @@ CREATE INDEX IF NOT EXISTS idx_reviewed_prs_repo_pr ON reviewed_prs(repo, pr_num
 	}
 
 	// Add cost_usd column if missing (existing databases)
-	return migrateAddCostColumn(db)
+	if err := migrateAddCostColumn(db); err != nil {
+		return err
+	}
+
+	// Add closed_at column if missing
+	return migrateAddClosedAtColumn(db)
 }
 
 // migrateDropUnique recreates reviewed_prs without the UNIQUE(repo, pr_number)
@@ -283,4 +289,50 @@ func (s *Store) RecentReviews(limit int) ([]ReviewRecord, error) {
 		records = append(records, r)
 	}
 	return records, rows.Err()
+}
+
+// TrackedOpenPRNumbers returns distinct PR numbers for a repo that are not marked closed.
+func (s *Store) TrackedOpenPRNumbers(repo string) ([]int64, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT pr_number FROM reviewed_prs
+		 WHERE repo = ? AND (closed_at = '' OR closed_at IS NULL)`,
+		repo,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var numbers []int64
+	for rows.Next() {
+		var n int64
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		numbers = append(numbers, n)
+	}
+	return numbers, rows.Err()
+}
+
+// MarkPRClosed sets closed_at on all records for the given repo+pr_number.
+func (s *Store) MarkPRClosed(repo string, prNumber int64) error {
+	_, err := s.db.Exec(
+		`UPDATE reviewed_prs SET closed_at = ? WHERE repo = ? AND pr_number = ? AND (closed_at = '' OR closed_at IS NULL)`,
+		time.Now().UTC().Format(time.RFC3339), repo, prNumber,
+	)
+	return err
+}
+
+// migrateAddClosedAtColumn adds closed_at column to existing databases.
+func migrateAddClosedAtColumn(db *sql.DB) error {
+	var tableSql string
+	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviewed_prs'").Scan(&tableSql)
+	if err != nil {
+		return nil
+	}
+	if strings.Contains(tableSql, "closed_at") {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE reviewed_prs ADD COLUMN closed_at TEXT NOT NULL DEFAULT ''")
+	return err
 }
