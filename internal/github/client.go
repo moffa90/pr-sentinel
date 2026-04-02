@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
@@ -18,6 +19,11 @@ type graphQLResponse struct {
 				Nodes []graphQLPullRequest `json:"nodes"`
 			} `json:"pullRequests"`
 		} `json:"repository"`
+		RateLimit struct {
+			Limit     int `json:"limit"`
+			Remaining int `json:"remaining"`
+			Cost      int `json:"cost"`
+		} `json:"rateLimit"`
 	} `json:"data"`
 }
 
@@ -96,6 +102,11 @@ const prQuery = `query($owner: String!, $name: String!) {
       }
     }
   }
+  rateLimit {
+    limit
+    remaining
+    cost
+  }
 }`
 
 // FetchOpenPRs runs `gh api graphql` to fetch open PRs for the given repo.
@@ -135,6 +146,16 @@ func parseGraphQLResponse(data []byte, repo string, githubUser string) ([]PullRe
 	var resp graphQLResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, nil, fmt.Errorf("failed to parse GraphQL response: %w", err)
+	}
+
+	// Log rate limit info
+	rl := resp.Data.RateLimit
+	if rl.Limit > 0 {
+		pct := float64(rl.Remaining) / float64(rl.Limit) * 100
+		slog.Debug("GitHub GraphQL rate limit", "remaining", rl.Remaining, "limit", rl.Limit, "cost", rl.Cost, "pct_remaining", fmt.Sprintf("%.0f%%", pct))
+		if pct < 20 {
+			slog.Warn("GitHub API rate limit low", "remaining", rl.Remaining, "limit", rl.Limit, "pct_remaining", fmt.Sprintf("%.0f%%", pct))
+		}
 	}
 
 	var prs []PullRequest

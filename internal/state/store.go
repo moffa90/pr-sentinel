@@ -46,10 +46,30 @@ type Store struct {
 }
 
 // Open creates or opens the SQLite database at path and runs migrations.
+// The database file and its parent directory are set to restrictive permissions
+// (0700 for directory, 0600 for file) since the DB may contain webhook URLs
+// and review content.
 func Open(path string) (*Store, error) {
+	// Ensure parent directory exists with restrictive permissions.
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create db directory: %w", err)
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+
+	// Force a connection so the file is created before we chmod.
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ping sqlite: %w", err)
+	}
+
+	// Restrict file permissions (ignore error for :memory: or missing file).
+	if path != ":memory:" {
+		_ = os.Chmod(path, 0o600)
 	}
 
 	if err := migrate(db); err != nil {

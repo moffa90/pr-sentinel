@@ -268,6 +268,93 @@ func TestParseGraphQLResponse_InvalidJSON(t *testing.T) {
 	}
 }
 
+const testRateLimitResponse = `{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "nodes": [
+          {
+            "number": 1,
+            "title": "test PR",
+            "url": "https://github.com/owner/repo/pull/1",
+            "isDraft": false,
+            "createdAt": "2026-03-15T10:00:00Z",
+            "changedFiles": 1,
+            "additions": 5,
+            "deletions": 2,
+            "author": { "login": "alice" },
+            "reviews": { "nodes": [] },
+            "comments": { "nodes": [] },
+            "commits": {
+              "nodes": [
+                { "commit": { "oid": "abc123", "committedDate": "2026-03-15T10:00:00Z" } }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "rateLimit": {
+      "limit": 5000,
+      "remaining": 4990,
+      "cost": 1
+    }
+  }
+}`
+
+func TestParseGraphQLResponse_WithRateLimit(t *testing.T) {
+	prs, _, err := parseGraphQLResponse([]byte(testRateLimitResponse), "owner/repo", "myuser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("expected 1 PR, got %d", len(prs))
+	}
+}
+
+const testRateLimitLowResponse = `{
+  "data": {
+    "repository": {
+      "pullRequests": { "nodes": [] }
+    },
+    "rateLimit": {
+      "limit": 5000,
+      "remaining": 500,
+      "cost": 1
+    }
+  }
+}`
+
+func TestParseGraphQLResponse_LowRateLimit(t *testing.T) {
+	// Should not error — just logs a warning internally
+	prs, followUps, err := parseGraphQLResponse([]byte(testRateLimitLowResponse), "owner/repo", "myuser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prs) != 0 {
+		t.Errorf("expected 0 PRs, got %d", len(prs))
+	}
+	if len(followUps) != 0 {
+		t.Errorf("expected 0 follow-ups, got %d", len(followUps))
+	}
+}
+
+const testNoRateLimitResponse = `{
+  "data": {
+    "repository": {
+      "pullRequests": { "nodes": [] }
+    }
+  }
+}`
+
+func TestParseGraphQLResponse_MissingRateLimit(t *testing.T) {
+	// Fine-grained PATs may return limit=0 or omit rateLimit entirely
+	_, _, err := parseGraphQLResponse([]byte(testNoRateLimitResponse), "owner/repo", "myuser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestSplitRepo(t *testing.T) {
 	tests := []struct {
 		input     string

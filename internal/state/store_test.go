@@ -1,6 +1,7 @@
 package state
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,6 +26,38 @@ func TestOpenClose(t *testing.T) {
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestOpenSetsFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	subdir := filepath.Join(dir, "nested", "dir")
+	path := filepath.Join(subdir, "test.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	// Check directory was created with 0700
+	dirInfo, err := os.Stat(subdir)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	dirPerm := dirInfo.Mode().Perm()
+	if dirPerm != 0o700 {
+		t.Errorf("directory permissions = %o, want 0700", dirPerm)
+	}
+
+	// Check DB file has 0600
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat db: %v", err)
+	}
+	filePerm := fileInfo.Mode().Perm()
+	if filePerm != 0o600 {
+		t.Errorf("file permissions = %o, want 0600", filePerm)
 	}
 }
 
