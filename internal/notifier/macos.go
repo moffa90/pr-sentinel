@@ -24,12 +24,23 @@ func (m *MacOSNotifier) Notify(e Event) error {
 	body := fmt.Sprintf("[%s] %s by %s (%s)", e.Mode, e.PRTitle, e.PRAuthor, status)
 	subtitle := fmt.Sprintf("%s#%d", e.Repo, e.PRNumber)
 
-	// Escape double quotes in body and subtitle for AppleScript.
-	body = strings.ReplaceAll(body, `"`, `\"`)
-	subtitle = strings.ReplaceAll(subtitle, `"`, `\"`)
-
-	script := fmt.Sprintf(`display notification "%s" with title "pr-sentinel" subtitle "%s"`, body, subtitle)
+	script := fmt.Sprintf(
+		`display notification %s with title "pr-sentinel" subtitle %s`,
+		escapeAppleScript(body),
+		escapeAppleScript(subtitle),
+	)
 
 	cmd := exec.Command("osascript", "-e", script)
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("osascript notification failed: %w", err)
+	}
+	return nil
+}
+
+// escapeAppleScript returns a safely quoted AppleScript string literal.
+// It wraps the value in double quotes after escaping backslashes and double quotes.
+func escapeAppleScript(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
 }

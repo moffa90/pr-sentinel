@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
+
+// webhookClient is used for all webhook HTTP requests with a sane timeout.
+var webhookClient = &http.Client{Timeout: 15 * time.Second}
 
 // WebhookNotifier sends the raw Event as JSON to a URL.
 type WebhookNotifier struct {
@@ -31,15 +35,15 @@ func postJSON(url string, payload interface{}) error {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	resp, err := webhookClient.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("post to %s: %w", url, err)
+		return fmt.Errorf("webhook request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook %s returned status %d", url, resp.StatusCode)
+		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
 	}
 	return nil
 }

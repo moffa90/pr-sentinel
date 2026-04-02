@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
+	"github.com/moffa90/pr-sentinel/internal/daemon"
 	"github.com/moffa90/pr-sentinel/internal/state"
 	"github.com/moffa90/pr-sentinel/internal/ui"
 	"github.com/spf13/cobra"
@@ -24,8 +25,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println(ui.Banner("Status"))
 	fmt.Println()
 
-	// Daemon status (placeholder until daemon is implemented)
-	fmt.Printf("%s Daemon: %s\n", ui.IconDot, ui.MutedStyle.Render("not running"))
+	// Daemon status
+	if daemon.IsRunning() {
+		fmt.Printf("%s Daemon: %s\n", ui.IconCheck, ui.SuccessStyle.Render("running"))
+	} else {
+		fmt.Printf("%s Daemon: %s\n", ui.IconDot, ui.MutedStyle.Render("not running"))
+	}
 
 	// Load config
 	cfg, err := config.Load(config.DefaultConfigPath())

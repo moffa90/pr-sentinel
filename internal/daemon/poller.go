@@ -139,7 +139,7 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 				Dels:     pr.Deletions,
 			})
 
-			repoPath := config.ExpandPath(filepath.Join(cfg.ReposDir, filepath.Base(repo.Name)))
+			repoPath := config.ExpandPath(repo.Path)
 			work = append(work, reviewWork{
 				repo:     repo,
 				pr:       pr,
@@ -163,17 +163,26 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 				continue
 			}
 
-			prompt := reviewer.BuildReviewPrompt(reviewer.ReviewParams{
-				Repo:     repo.Name,
-				PRNumber: candidate.Number,
-				PRTitle:  candidate.Title,
-				PRAuthor: candidate.Author,
-				Files:    candidate.Files,
-				Adds:     candidate.Additions,
-				Dels:     candidate.Deletions,
+			// Get previous review from state store for follow-up context
+			previousReview := ""
+			prevRecord, prevErr := store.GetReview(repo.Name, candidate.Number)
+			if prevErr == nil {
+				previousReview = prevRecord.ReviewOutput
+			}
+
+			prompt := reviewer.BuildFollowUpPrompt(reviewer.FollowUpParams{
+				Repo:           repo.Name,
+				PRNumber:       candidate.Number,
+				PRTitle:        candidate.Title,
+				PRAuthor:       candidate.Author,
+				Files:          candidate.Files,
+				Adds:           candidate.Additions,
+				Dels:           candidate.Deletions,
+				PreviousReview: previousReview,
+				NewCommitCount: candidate.NewCommitCount,
 			})
 
-			repoPath := config.ExpandPath(filepath.Join(cfg.ReposDir, filepath.Base(repo.Name)))
+			repoPath := config.ExpandPath(repo.Path)
 			work = append(work, reviewWork{
 				repo:     repo,
 				pr:       candidate.PullRequest,
@@ -203,7 +212,11 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 	slog.Info("starting reviews", "count", len(work), "parallel", opts.MaxParallelReviews)
 
 	// Phase 2: Execute reviews in parallel
-	sem := make(chan struct{}, opts.MaxParallelReviews)
+	parallel := opts.MaxParallelReviews
+	if parallel <= 0 {
+		parallel = 1
+	}
+	sem := make(chan struct{}, parallel)
 	outcomes := make(chan reviewOutcome, len(work))
 	var wg sync.WaitGroup
 
