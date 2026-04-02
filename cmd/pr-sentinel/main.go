@@ -46,6 +46,7 @@ func init() {
 	rootCmd.AddCommand(commands.NewPromoteCmd())
 	rootCmd.AddCommand(commands.NewDemoteCmd())
 	rootCmd.AddCommand(commands.NewLogsCmd())
+	rootCmd.AddCommand(commands.NewNotifyTestCmd())
 }
 
 func main() {

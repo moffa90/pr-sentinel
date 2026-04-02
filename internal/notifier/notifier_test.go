@@ -201,23 +201,33 @@ func TestBuildTeamsPayload(t *testing.T) {
 	}
 
 	p := buildTeamsPayload(e)
-	if p.Type != "message" {
-		t.Errorf("type: got %q, want %q", p.Type, "message")
+	if p["type"] != "message" {
+		t.Errorf("type: got %q, want %q", p["type"], "message")
 	}
-	if len(p.Attachments) == 0 {
+	attachments, ok := p["attachments"].([]interface{})
+	if !ok || len(attachments) == 0 {
 		t.Fatal("expected at least one attachment")
 	}
-	att := p.Attachments[0]
-	if att.ContentType != "application/vnd.microsoft.card.adaptive" {
-		t.Errorf("contentType: got %q", att.ContentType)
+	att, ok := attachments[0].(map[string]interface{})
+	if !ok {
+		t.Fatal("attachment should be a map")
 	}
-	if att.Content.Type != "AdaptiveCard" {
-		t.Errorf("card type: got %q", att.Content.Type)
+	if att["contentType"] != "application/vnd.microsoft.card.adaptive" {
+		t.Errorf("contentType: got %q", att["contentType"])
 	}
-	if len(att.Content.Body) == 0 {
+	content, ok := att["content"].(map[string]interface{})
+	if !ok {
+		t.Fatal("content should be a map")
+	}
+	if content["type"] != "AdaptiveCard" {
+		t.Errorf("card type: got %q", content["type"])
+	}
+	body, ok := content["body"].([]interface{})
+	if !ok || len(body) == 0 {
 		t.Error("card body should not be empty")
 	}
-	if len(att.Content.Actions) == 0 {
+	actions, ok := content["actions"].([]interface{})
+	if !ok || len(actions) == 0 {
 		t.Error("card should have actions")
 	}
 }

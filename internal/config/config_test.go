@@ -19,8 +19,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.MaxReviewsPerDay != 20 {
 		t.Errorf("MaxReviewsPerDay = %d, want 20", cfg.MaxReviewsPerDay)
 	}
-	if cfg.ReviewTimeout != 5*time.Minute {
-		t.Errorf("ReviewTimeout = %v, want %v", cfg.ReviewTimeout, 5*time.Minute)
+	if cfg.ReviewTimeout != 10*time.Minute {
+		t.Errorf("ReviewTimeout = %v, want %v", cfg.ReviewTimeout, 10*time.Minute)
 	}
 	if cfg.ReposDir != "~/Git" {
 		t.Errorf("ReposDir = %q, want %q", cfg.ReposDir, "~/Git")

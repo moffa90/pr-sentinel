@@ -21,7 +21,7 @@ const (
 	DefaultPollInterval        = 10 * time.Minute
 	DefaultMaxReviewsCycle     = 5
 	DefaultMaxReviewsDay       = 20
-	DefaultReviewTimeout       = 5 * time.Minute
+	DefaultReviewTimeout       = 10 * time.Minute
 	DefaultDisclosureText      = "> AI-assisted review by [pr-sentinel](https://github.com/moffa90/pr-sentinel)"
 	DefaultMaxParallelReviews  = 3
 )
@@ -80,6 +80,7 @@ type RepoConfig struct {
 	Path               string `yaml:"path"`
 	Mode               string `yaml:"mode"`
 	ReviewInstructions string `yaml:"review_instructions"`
+	TeamsWebhook       string `yaml:"teams_webhook"`
 }
 
 // DefaultConfig returns a Config populated with default values.
