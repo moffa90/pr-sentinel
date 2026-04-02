@@ -20,7 +20,7 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <array>
         <string>{{.BinaryPath}}</string>
         <string>start</string>
-        <string>--daemon</string>
+        <string>--daemon-mode</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
