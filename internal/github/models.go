@@ -15,3 +15,12 @@ type PullRequest struct {
 	Additions int
 	Deletions int
 }
+
+// FollowUpCandidate is a PR that was previously reviewed/commented on by the user
+// but has new commits since the last comment.
+type FollowUpCandidate struct {
+	PullRequest
+	LastCommentAt  time.Time // when the user last commented/reviewed
+	NewCommitSince string    // OID of the first commit after LastCommentAt
+	NewCommitCount int       // how many commits are newer than LastCommentAt
+}

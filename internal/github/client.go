@@ -37,8 +37,25 @@ type graphQLPullRequest struct {
 			Author struct {
 				Login string `json:"login"`
 			} `json:"author"`
+			PublishedAt time.Time `json:"publishedAt"`
 		} `json:"nodes"`
 	} `json:"reviews"`
+	Comments struct {
+		Nodes []struct {
+			Author struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			CreatedAt time.Time `json:"createdAt"`
+		} `json:"nodes"`
+	} `json:"comments"`
+	Commits struct {
+		Nodes []struct {
+			Commit struct {
+				OID           string    `json:"oid"`
+				CommittedDate time.Time `json:"committedDate"`
+			} `json:"commit"`
+		} `json:"nodes"`
+	} `json:"commits"`
 }
 
 // GraphQL query template that fetches open PRs (first 50) with reviews.
@@ -58,6 +75,21 @@ const prQuery = `query($owner: String!, $name: String!) {
         reviews(first: 50) {
           nodes {
             author { login }
+            publishedAt
+          }
+        }
+        comments(first: 50) {
+          nodes {
+            author { login }
+            createdAt
+          }
+        }
+        commits(last: 100) {
+          nodes {
+            commit {
+              oid
+              committedDate
+            }
           }
         }
       }
@@ -108,12 +140,20 @@ func parseGraphQLResponse(data []byte, repo string, githubUser string) ([]PullRe
 			continue
 		}
 
-		// Filter out PRs already reviewed by githubUser
+		// Filter out PRs already reviewed or commented on by githubUser
 		alreadyReviewed := false
 		for _, review := range node.Reviews.Nodes {
 			if strings.EqualFold(review.Author.Login, githubUser) {
 				alreadyReviewed = true
 				break
+			}
+		}
+		if !alreadyReviewed {
+			for _, comment := range node.Comments.Nodes {
+				if strings.EqualFold(comment.Author.Login, githubUser) {
+					alreadyReviewed = true
+					break
+				}
 			}
 		}
 		if alreadyReviewed {
