@@ -17,12 +17,14 @@ import (
 
 func NewStartCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "start",
-		Short: "Start watching repos for new PRs",
-		Long:  "Polls watched repositories for new PRs and runs Claude Code reviews automatically.",
-		RunE:  runStart,
+		Use:           "start",
+		Short:         "Start watching repos for new PRs",
+		Long:          "Polls watched repositories for new PRs and runs Claude Code reviews automatically.",
+		RunE:          runStart,
+		SilenceUsage: true,
 	}
 	cmd.Flags().BoolP("daemon", "d", false, "Run as launchd daemon (detached)")
+	cmd.Flags().Bool("once", false, "Run a single poll cycle and exit")
 	cmd.Flags().Bool("daemon-mode", false, "Internal flag for launchd invocation")
 	_ = cmd.Flags().MarkHidden("daemon-mode")
 	return cmd
@@ -38,6 +40,7 @@ func NewStopCmd() *cobra.Command {
 
 func runStart(cmd *cobra.Command, args []string) error {
 	daemonFlag, _ := cmd.Flags().GetBool("daemon")
+	onceFlag, _ := cmd.Flags().GetBool("once")
 	daemonMode, _ := cmd.Flags().GetBool("daemon-mode")
 
 	if daemonFlag {
@@ -90,6 +93,14 @@ func runStart(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Printf("  Tracking %d repos  ·  Poll every %s  ·  %d live · %d dry-run\n\n",
 			len(cfg.Repos), cfg.PollInterval, liveCount, dryCount)
+	}
+
+	if onceFlag {
+		result := daemon.RunPollCycle(ctx, cfg, store, notify)
+		if result.Errors > 0 {
+			return fmt.Errorf("poll cycle completed with %d errors", result.Errors)
+		}
+		return nil
 	}
 
 	err = daemon.RunDaemon(ctx, cfg, store, notify)
