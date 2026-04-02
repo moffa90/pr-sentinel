@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
-	"github.com/moffa90/pr-sentinel/internal/daemon"
 	"github.com/moffa90/pr-sentinel/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -54,8 +53,5 @@ func setMode(repoName, mode string) error {
 
 	badge := ui.ModeBadge(mode)
 	fmt.Printf("%s %s is now %s\n", ui.IconCheck, ui.BrandStyle.Render(repoName), badge)
-	if daemon.IsRunning() {
-		fmt.Printf("  %s Restart the daemon for changes to take effect\n", ui.MutedStyle.Render("hint:"))
-	}
 	return nil
 }

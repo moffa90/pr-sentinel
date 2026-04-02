@@ -30,13 +30,6 @@ var (
 	IconShield = "🛡"
 )
 
-// Severity icons.
-var (
-	SeverityHigh   = ErrorStyle.Render("●")
-	SeverityMedium = WarningStyle.Render("●")
-	SeverityLow    = SuccessStyle.Render("●")
-)
-
 // Mode badges.
 var (
 	ModeLive   = SuccessStyle.Render("🟢 live")

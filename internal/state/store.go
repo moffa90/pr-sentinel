@@ -22,6 +22,7 @@ type ReviewRecord struct {
 	FindingsSummary string
 	Mode            string
 	Posted          bool
+	CostUSD         float64
 	ReviewedAt      time.Time
 }
 
@@ -76,6 +77,7 @@ CREATE TABLE IF NOT EXISTS reviewed_prs (
 	findings_summary TEXT    NOT NULL DEFAULT '',
 	mode             TEXT    NOT NULL DEFAULT '',
 	posted           INTEGER NOT NULL DEFAULT 0,
+	cost_usd         REAL    NOT NULL DEFAULT 0,
 	reviewed_at      TEXT    NOT NULL
 );
 
@@ -93,7 +95,12 @@ CREATE INDEX IF NOT EXISTS idx_reviewed_prs_repo_pr ON reviewed_prs(repo, pr_num
 
 	// Migration: drop UNIQUE constraint from existing databases.
 	// SQLite doesn't support ALTER TABLE DROP CONSTRAINT, so we recreate.
-	return migrateDropUnique(db)
+	if err := migrateDropUnique(db); err != nil {
+		return err
+	}
+
+	// Add cost_usd column if missing (existing databases)
+	return migrateAddCostColumn(db)
 }
 
 // migrateDropUnique recreates reviewed_prs without the UNIQUE(repo, pr_number)
@@ -135,11 +142,25 @@ COMMIT;`
 	return err
 }
 
+// migrateAddCostColumn adds cost_usd column to existing databases.
+func migrateAddCostColumn(db *sql.DB) error {
+	var tableSql string
+	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviewed_prs'").Scan(&tableSql)
+	if err != nil {
+		return nil
+	}
+	if strings.Contains(tableSql, "cost_usd") {
+		return nil // already has the column
+	}
+	_, err = db.Exec("ALTER TABLE reviewed_prs ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0")
+	return err
+}
+
 // RecordReview appends a review record. Multiple reviews per PR are preserved.
 func (s *Store) RecordReview(r ReviewRecord) error {
 	const query = `
-INSERT INTO reviewed_prs (repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, reviewed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+INSERT INTO reviewed_prs (repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, reviewed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	posted := 0
 	if r.Posted {
@@ -149,7 +170,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.Exec(query,
 		r.Repo, r.PRNumber, r.PRTitle, r.PRAuthor,
 		r.ReviewOutput, r.FindingsSummary, r.Mode,
-		posted, r.ReviewedAt.UTC().Format(time.RFC3339),
+		posted, r.CostUSD, r.ReviewedAt.UTC().Format(time.RFC3339),
 	)
 	return err
 }
@@ -174,12 +195,12 @@ func (s *Store) GetReview(repo string, prNumber int64) (ReviewRecord, error) {
 	var reviewedAt string
 
 	err := s.db.QueryRow(
-		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, reviewed_at
+		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, reviewed_at
 		 FROM reviewed_prs WHERE repo = ? AND pr_number = ?
 		 ORDER BY reviewed_at DESC LIMIT 1`,
 		repo, prNumber,
 	).Scan(&r.ID, &r.Repo, &r.PRNumber, &r.PRTitle, &r.PRAuthor,
-		&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &reviewedAt)
+		&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &reviewedAt)
 	if err != nil {
 		return ReviewRecord{}, err
 	}
@@ -215,10 +236,26 @@ func (s *Store) IncrementDailyCount(date string) error {
 	return err
 }
 
+// DailyCost returns the total cost in USD for reviews on the given date.
+func (s *Store) DailyCost(date string) (float64, error) {
+	var cost sql.NullFloat64
+	err := s.db.QueryRow(
+		`SELECT SUM(cost_usd) FROM reviewed_prs WHERE reviewed_at >= ? AND reviewed_at < ?`,
+		date+"T00:00:00Z", date+"T23:59:59Z",
+	).Scan(&cost)
+	if err != nil {
+		return 0, err
+	}
+	if !cost.Valid {
+		return 0, nil
+	}
+	return cost.Float64, nil
+}
+
 // RecentReviews returns the most recent review records ordered by reviewed_at descending.
 func (s *Store) RecentReviews(limit int) ([]ReviewRecord, error) {
 	rows, err := s.db.Query(
-		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, reviewed_at
+		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, reviewed_at
 		 FROM reviewed_prs ORDER BY reviewed_at DESC LIMIT ?`,
 		limit,
 	)
@@ -234,7 +271,7 @@ func (s *Store) RecentReviews(limit int) ([]ReviewRecord, error) {
 		var reviewedAt string
 
 		if err := rows.Scan(&r.ID, &r.Repo, &r.PRNumber, &r.PRTitle, &r.PRAuthor,
-			&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &reviewedAt); err != nil {
+			&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &reviewedAt); err != nil {
 			return nil, err
 		}
 

@@ -59,6 +59,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				cfg.MaxReviewsPerDay,
 			)
 		}
+		cost, costErr := store.DailyCost(today)
+		if costErr == nil && cost > 0 {
+			fmt.Printf("%s Cost today: %s\n",
+				ui.IconDot,
+				ui.BrandStyle.Render(fmt.Sprintf("$%.4f", cost)),
+			)
+		}
 	}
 
 	fmt.Println()

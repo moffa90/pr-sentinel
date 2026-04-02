@@ -316,6 +316,7 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			FindingsSummary: findingsSummary,
 			Mode:            mode,
 			Posted:          posted,
+			CostUSD:         o.result.CostUSD,
 			ReviewedAt:      time.Now().UTC(),
 		}); err != nil {
 			slog.Error("failed to record review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
@@ -360,18 +361,23 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 }
 
 // RunDaemon starts the poll loop. It runs a cycle immediately, then on every
-// tick of cfg.PollInterval until the context is cancelled. If a cycle is still
-// running when the next tick fires, the tick is skipped.
+// tick of cfg.PollInterval until the context is cancelled.
 func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notify *notifier.Dispatcher) error {
 	slog.Info("daemon starting", "poll_interval", cfg.PollInterval)
 
-	running := false
 	cycleCount := 0
 
 	runCycle := func() {
-		running = true
+		// Hot-reload config each cycle
+		freshCfg, loadErr := config.Load(config.DefaultConfigPath())
+		if loadErr != nil {
+			slog.Warn("config reload failed, using previous config", "error", loadErr)
+		} else {
+			cfg = freshCfg
+			notify = BuildNotifier(cfg)
+		}
+
 		result := RunPollCycle(ctx, cfg, store, notify)
-		running = false
 		cycleCount++
 
 		if err := WriteHealth(HealthStatus{
@@ -396,10 +402,6 @@ func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notif
 			slog.Info("daemon stopping", "reason", ctx.Err())
 			return ctx.Err()
 		case <-ticker.C:
-			if running {
-				slog.Info("poll cycle still running, skipping tick")
-				continue
-			}
 			runCycle()
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -97,7 +98,7 @@ func TestDispatcherCollectsErrors(t *testing.T) {
 		t.Error("notifier 2 should still be called despite other errors")
 	}
 	errMsg := err.Error()
-	if !(contains(errMsg, "fail-1") && contains(errMsg, "fail-3")) {
+	if !(strings.Contains(errMsg, "fail-1") && strings.Contains(errMsg, "fail-3")) {
 		t.Errorf("error should contain both failures, got: %s", errMsg)
 	}
 }
@@ -178,10 +179,10 @@ func TestBuildSlackPayload(t *testing.T) {
 	if p.Text == "" {
 		t.Fatal("slack payload text should not be empty")
 	}
-	if !contains(p.Text, "pr-sentinel") {
+	if !strings.Contains(p.Text, "pr-sentinel") {
 		t.Error("text should contain pr-sentinel")
 	}
-	if !contains(p.Text, "owner/repo#10") {
+	if !strings.Contains(p.Text, "owner/repo#10") {
 		t.Error("text should contain repo#number")
 	}
 }
@@ -232,17 +233,3 @@ func TestBuildTeamsPayload(t *testing.T) {
 	}
 }
 
-// --- helper ---
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
-}
-
-func containsStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}

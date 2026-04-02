@@ -21,10 +21,8 @@ func (t *TeamsNotifier) Notify(e Event) error {
 // buildTeamsPayload formats the event into a Teams Adaptive Card message.
 func buildTeamsPayload(e Event) map[string]interface{} {
 	statusText := "Posted"
-	statusColor := "good"
 	if !e.Posted {
 		statusText = "Dry Run"
-		statusColor = "accent"
 	}
 
 	modeEmoji := "🟢"
@@ -33,10 +31,7 @@ func buildTeamsPayload(e Event) map[string]interface{} {
 	} else if e.Mode == "test" {
 		modeEmoji = "🧪"
 		statusText = "Test"
-		statusColor = "accent"
 	}
-
-	_ = statusColor // reserved for future use with container styles
 
 	title := fmt.Sprintf("%s #%d", e.Repo, e.PRNumber)
 	if e.PRNumber == 0 {
