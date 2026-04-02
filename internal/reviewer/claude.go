@@ -73,6 +73,7 @@ func RunReview(ctx context.Context, repoPath string, prompt string, globalInstru
 	args := BuildClaudeArgs(prompt, globalInstructions, repoInstructions)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = repoPath
+	slog.Debug("claude args", "args", args, "dir", repoPath, "timeout", timeout)
 
 	// Heartbeat goroutine — logs progress every 30s
 	heartbeatCtx, heartbeatCancel := context.WithCancel(context.Background())
@@ -92,6 +93,7 @@ func RunReview(ctx context.Context, repoPath string, prompt string, globalInstru
 	output, err := cmd.CombinedOutput()
 	heartbeatCancel() // stop heartbeat
 	duration := time.Since(start)
+	slog.Debug("claude output", "bytes", len(output), "duration", duration.Round(time.Second))
 
 	if err != nil {
 		if ctx.Err() == context.Canceled {

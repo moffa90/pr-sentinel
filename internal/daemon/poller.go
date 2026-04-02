@@ -162,6 +162,8 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 		}
 	}
 
+	slog.Debug("work items collected", "items", len(work))
+
 	if len(work) == 0 {
 		slog.Info("poll cycle complete",
 			"reviewed", result.Reviewed,
@@ -191,6 +193,7 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			defer func() { <-sem }() // release
 
 			slog.Info("reviewing PR", "repo", w.repo.Name, "pr", w.pr.Number, "title", w.pr.Title)
+			slog.Debug("starting review subprocess", "repo", w.repo.Name, "pr", w.pr.Number, "repoPath", w.repoPath)
 			rr := reviewer.RunReview(ctx, w.repoPath, w.prompt, opts.ReviewInstructions, w.repo.ReviewInstructions, opts.ReviewTimeout)
 			body := ""
 			if rr.Error == nil {
