@@ -10,11 +10,17 @@ Your CLAUDE.md files, memory, and skills define how you review code. pr-sentinel
 
 - **Auto-detect repos** — Scans a directory, finds GitHub repos, lets you pick which to track
 - **Local Claude Code reviews** — Runs inside each repo for full `.claude/` context
+- **Structured output** — JSON schema-enforced verdicts with severity-tagged findings
+- **Follow-up reviews** — Detects new commits after your last comment and re-reviews automatically
+- **Parallel execution** — Configurable concurrency for reviewing multiple PRs simultaneously
 - **Dry-run by default** — New repos start in dry-run mode; reviews are saved locally until you promote to live
-- **Post to GitHub** — Live mode posts reviews as PR comments, tags the author
-- **Configurable notifications** — macOS, Slack, Teams, generic webhooks
-- **Rate limiting** — Per-cycle and daily review caps
-- **launchd daemon** — Background service on macOS with auto-start
+- **Post to GitHub** — Live mode posts reviews as PR comments with retry on failure
+- **Closed PR detection** — Automatically detects merged/closed PRs and stops tracking them
+- **Configurable notifications** — macOS, Slack, Teams, generic webhooks (per-repo Teams webhook support)
+- **Cost tracking** — Tracks Claude API spend per review and daily totals
+- **Rate limiting** — Per-cycle and daily review caps, GitHub API rate limit awareness
+- **Security sandboxed** — Claude restricted to read-only tools during reviews via `--allowedTools`
+- **launchd daemon** — Background service on macOS with auto-start, health monitoring, config hot-reload
 
 ## Prerequisites
 
@@ -43,14 +49,16 @@ pr-sentinel start -d
 |---------|-------------|
 | `init [path]` | Scan directory for repos and generate config |
 | `start` | Start polling (foreground) |
+| `start --once` | Run a single poll cycle and exit |
 | `start -d` | Start as background daemon (launchd) |
 | `stop` | Stop daemon |
-| `status` | Show tracked repos and review stats |
+| `status` | Show tracked repos, review stats, daily cost, and daemon health |
 | `review <pr-url>` | One-off review of a specific PR |
 | `repos` | List tracked repositories |
 | `promote <repo>` | Move repo to live mode (posts reviews) |
 | `demote <repo>` | Move repo to dry-run mode (saves locally) |
 | `logs` | Show recent review activity |
+| `notify-test` | Test notification delivery (use `--repo` for per-repo webhook) |
 | `version` | Show version |
 
 ## Configuration
@@ -61,8 +69,9 @@ Config lives at `~/.config/pr-sentinel/config.yaml`:
 poll_interval: 10m
 max_reviews_per_cycle: 5
 max_reviews_per_day: 20
+max_parallel_reviews: 3
 repos_dir: ~/Git
-review_timeout: 5m
+review_timeout: 10m
 
 github_user: ""  # Auto-detected from gh auth status
 
@@ -87,8 +96,9 @@ notifications:
 repos:
   - name: owner/repo
     path: ~/Git/repo
-    mode: dry-run         # dry-run | live
-    review_instructions: ""  # Per-repo override
+    mode: dry-run              # dry-run | live
+    review_instructions: ""    # Per-repo override
+    teams_webhook: ""          # Per-repo Teams notification
 ```
 
 ## Review Context (Layered)
@@ -124,10 +134,10 @@ Users with a rich `.claude/` setup get full context automatically. Users without
 └─────────────────────────────────────────────────┘
 ```
 
-1. **Poller** — queries GitHub GraphQL API for open, non-draft PRs you haven't reviewed
-2. **Reviewer** — `cd`s into the repo and runs `claude -p` with your full `.claude/` context
-3. **Publisher** — posts to GitHub (live) or saves locally (dry-run)
-4. **Notifier** — alerts you via macOS, Slack, Teams, or webhook
+1. **Poller** — queries GitHub GraphQL API for open, non-draft PRs. Detects new PRs and follow-up candidates (PRs with new commits since your last comment). Also detects closed/merged PRs and stops tracking them
+2. **Reviewer** — `cd`s into the repo and runs `claude -p` with your full `.claude/` context. Security sandboxed via `--allowedTools` (read-only + gh/git). Returns structured JSON with verdict and findings
+3. **Publisher** — posts to GitHub with retry (live) or saves timestamped markdown locally (dry-run)
+4. **Notifier** — alerts you via macOS, Slack, Teams, or webhook. Supports per-repo Teams webhooks
 
 ## Daemon Management
 
