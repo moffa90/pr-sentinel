@@ -64,6 +64,19 @@ func shouldSkip(opts PollOptions, cycleCount int, dailyCount int) bool {
 	return false
 }
 
+// PRFetcher abstracts fetching open PRs for a repo. Enables testing
+// without hitting the real GitHub API.
+type PRFetcher interface {
+	FetchOpenPRs(repo string, githubUser string) ([]github.PullRequest, []github.FollowUpCandidate, error)
+}
+
+// GitHubPRFetcher is the production implementation that calls the gh CLI.
+type GitHubPRFetcher struct{}
+
+func (g GitHubPRFetcher) FetchOpenPRs(repo string, githubUser string) ([]github.PullRequest, []github.FollowUpCandidate, error) {
+	return github.FetchOpenPRs(repo, githubUser)
+}
+
 // reviewWork represents a single PR review to be executed.
 type reviewWork struct {
 	repo     config.RepoConfig
@@ -82,6 +95,11 @@ type reviewOutcome struct {
 // RunPollCycle iterates configured repos, fetches open PRs, runs reviews,
 // publishes results, records state, and sends notifications.
 func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, notify *notifier.Dispatcher) PollResult {
+	return RunPollCycleWith(ctx, cfg, store, notify, GitHubPRFetcher{})
+}
+
+// RunPollCycleWith is the testable version of RunPollCycle that accepts a PRFetcher.
+func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store, notify *notifier.Dispatcher, fetcher PRFetcher) PollResult {
 	opts := PollOptionsFromConfig(cfg)
 	today := time.Now().UTC().Format("2006-01-02")
 	dailyCount, err := store.GetDailyCount(today)
@@ -101,7 +119,7 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 
 		slog.Info("polling repo", "repo", repo.Name, "mode", repo.Mode)
 
-		prs, followUpCandidates, err := github.FetchOpenPRs(repo.Name, opts.GitHubUser)
+		prs, followUpCandidates, err := fetcher.FetchOpenPRs(repo.Name, opts.GitHubUser)
 		if err != nil {
 			slog.Error("failed to fetch PRs", "repo", repo.Name, "error", err)
 			result.Errors++
