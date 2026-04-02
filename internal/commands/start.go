@@ -92,7 +92,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 			len(cfg.Repos), cfg.PollInterval, liveCount, dryCount)
 	}
 
-	return daemon.RunDaemon(ctx, cfg, store, notify)
+	err = daemon.RunDaemon(ctx, cfg, store, notify)
+	if err != nil && err == context.Canceled {
+		fmt.Println() // newline after ^C
+		return nil
+	}
+	return err
 }
 
 func startDaemon() error {
