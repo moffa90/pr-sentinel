@@ -41,6 +41,7 @@ func TestPollOptionsFromConfig(t *testing.T) {
 	cfg := config.Config{
 		MaxReviewsPerCycle: 10,
 		MaxReviewsPerDay:   50,
+		MaxParallelReviews: 4,
 		ReviewTimeout:      3 * time.Minute,
 		GitHubUser:         "testuser",
 		Review: config.ReviewConfig{
@@ -72,5 +73,8 @@ func TestPollOptionsFromConfig(t *testing.T) {
 	}
 	if !opts.AIDisclosure {
 		t.Error("AIDisclosure should be true")
+	}
+	if opts.MaxParallelReviews != 4 {
+		t.Errorf("MaxParallelReviews = %d, want 4", opts.MaxParallelReviews)
 	}
 }

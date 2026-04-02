@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
@@ -19,6 +20,7 @@ import (
 type PollOptions struct {
 	MaxReviewsPerCycle int
 	MaxReviewsPerDay   int
+	MaxParallelReviews int
 	ReviewTimeout      time.Duration
 	GitHubUser         string
 	ReviewInstructions string
@@ -40,6 +42,7 @@ func PollOptionsFromConfig(cfg config.Config) PollOptions {
 	return PollOptions{
 		MaxReviewsPerCycle: cfg.MaxReviewsPerCycle,
 		MaxReviewsPerDay:   cfg.MaxReviewsPerDay,
+		MaxParallelReviews: cfg.MaxParallelReviews,
 		ReviewTimeout:      cfg.ReviewTimeout,
 		GitHubUser:         cfg.GitHubUser,
 		ReviewInstructions: cfg.Review.Instructions,
@@ -59,6 +62,22 @@ func shouldSkip(opts PollOptions, cycleCount int, dailyCount int) bool {
 	return false
 }
 
+// reviewWork represents a single PR review to be executed.
+type reviewWork struct {
+	repo     config.RepoConfig
+	pr       github.PullRequest
+	diff     string
+	prompt   string
+	repoPath string
+}
+
+// reviewOutcome holds the result of a single review execution.
+type reviewOutcome struct {
+	work   reviewWork
+	result reviewer.ReviewResult
+	body   string
+}
+
 // RunPollCycle iterates configured repos, fetches open PRs, runs reviews,
 // publishes results, records state, and sends notifications.
 func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, notify *notifier.Dispatcher) PollResult {
@@ -72,6 +91,8 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 	var result PollResult
 	cycleCount := 0
 
+	// Phase 1: Collect work items
+	var work []reviewWork
 	for _, repo := range cfg.Repos {
 		if ctx.Err() != nil {
 			break
@@ -109,8 +130,6 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 				continue
 			}
 
-			slog.Info("reviewing PR", "repo", repo.Name, "pr", pr.Number, "title", pr.Title)
-
 			diff, err := github.GetPRDiff(repo.Name, pr.Number)
 			if err != nil {
 				slog.Error("failed to get PR diff", "repo", repo.Name, "pr", pr.Number, "error", err)
@@ -130,78 +149,132 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			})
 
 			repoPath := config.ExpandPath(filepath.Join(cfg.ReposDir, filepath.Base(repo.Name)))
-			reviewResult := reviewer.RunReview(ctx, repoPath, prompt, opts.ReviewInstructions, repo.ReviewInstructions, opts.ReviewTimeout)
-			if reviewResult.Error != nil {
-				slog.Error("review failed", "repo", repo.Name, "pr", pr.Number, "error", reviewResult.Error)
-				result.Errors++
-				continue
-			}
+			work = append(work, reviewWork{
+				repo:     repo,
+				pr:       pr,
+				diff:     diff,
+				prompt:   prompt,
+				repoPath: repoPath,
+			})
 
-			body := publisher.BuildReviewBody(reviewResult.Output, opts.AIDisclosure, opts.DisclosureText, pr.Author)
-
-			posted := false
-			reviewPath := ""
-			mode := repo.Mode
-
-			if mode == config.ModeLive {
-				if err := publisher.PostLiveReview(repo.Name, pr.Number, body); err != nil {
-					slog.Error("failed to post review", "repo", repo.Name, "pr", pr.Number, "error", err)
-					result.Errors++
-					continue
-				}
-				posted = true
-				result.Posted++
-			} else {
-				reviewsDir := filepath.Join(config.ConfigDir(), "reviews")
-				savedPath, err := publisher.SaveDryRunReview(publisher.SaveParams{
-					ReviewsDir: reviewsDir,
-					Repo:       repo.Name,
-					PRNumber:   pr.Number,
-					PRTitle:    pr.Title,
-					PRAuthor:   pr.Author,
-					Body:       body,
-				})
-				if err != nil {
-					slog.Error("failed to save dry-run review", "repo", repo.Name, "pr", pr.Number, "error", err)
-					result.Errors++
-					continue
-				}
-				reviewPath = savedPath
-				result.DryRun++
-			}
-
-			if err := store.RecordReview(state.ReviewRecord{
-				Repo:            repo.Name,
-				PRNumber:        pr.Number,
-				PRTitle:         pr.Title,
-				PRAuthor:        pr.Author,
-				ReviewOutput:    reviewResult.Output,
-				FindingsSummary: fmt.Sprintf("%d files, %d additions, %d deletions", pr.Files, pr.Additions, pr.Deletions),
-				Mode:            mode,
-				Posted:          posted,
-				ReviewedAt:      time.Now().UTC(),
-			}); err != nil {
-				slog.Error("failed to record review", "repo", repo.Name, "pr", pr.Number, "error", err)
-			}
-
-			if err := store.IncrementDailyCount(today); err != nil {
-				slog.Error("failed to increment daily count", "error", err)
-			}
-
-			if notify != nil {
-				evt := notifier.NewEvent(
-					repo.Name, pr.Number, pr.Title, pr.Author, pr.URL,
-					mode, posted, fmt.Sprintf("%d files changed", pr.Files), reviewPath,
-				)
-				if err := notify.Notify(evt); err != nil {
-					slog.Error("notification failed", "error", err)
-				}
-			}
-
-			result.Reviewed++
 			cycleCount++
 			dailyCount++
 		}
+	}
+
+	if len(work) == 0 {
+		slog.Info("poll cycle complete",
+			"reviewed", result.Reviewed,
+			"posted", result.Posted,
+			"dry_run", result.DryRun,
+			"skipped", result.Skipped,
+			"errors", result.Errors,
+		)
+		return result
+	}
+
+	slog.Info("starting reviews", "count", len(work), "parallel", opts.MaxParallelReviews)
+
+	// Phase 2: Execute reviews in parallel
+	sem := make(chan struct{}, opts.MaxParallelReviews)
+	outcomes := make(chan reviewOutcome, len(work))
+	var wg sync.WaitGroup
+
+	for _, w := range work {
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		go func(w reviewWork) {
+			defer wg.Done()
+			sem <- struct{}{}        // acquire
+			defer func() { <-sem }() // release
+
+			slog.Info("reviewing PR", "repo", w.repo.Name, "pr", w.pr.Number, "title", w.pr.Title)
+			rr := reviewer.RunReview(ctx, w.repoPath, w.prompt, opts.ReviewInstructions, w.repo.ReviewInstructions, opts.ReviewTimeout)
+			body := ""
+			if rr.Error == nil {
+				body = publisher.BuildReviewBody(rr.Output, opts.AIDisclosure, opts.DisclosureText, w.pr.Author)
+			}
+			slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second))
+			outcomes <- reviewOutcome{work: w, result: rr, body: body}
+		}(w)
+	}
+
+	// Close outcomes channel when all goroutines finish
+	go func() {
+		wg.Wait()
+		close(outcomes)
+	}()
+
+	// Phase 3: Process outcomes sequentially
+	for o := range outcomes {
+		if o.result.Error != nil {
+			slog.Error("review failed", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", o.result.Error)
+			result.Errors++
+			continue
+		}
+
+		posted := false
+		reviewPath := ""
+		mode := o.work.repo.Mode
+
+		if mode == config.ModeLive {
+			if err := publisher.PostLiveReview(o.work.repo.Name, o.work.pr.Number, o.body); err != nil {
+				slog.Error("failed to post review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
+				result.Errors++
+				continue
+			}
+			posted = true
+			result.Posted++
+		} else {
+			reviewsDir := filepath.Join(config.ConfigDir(), "reviews")
+			savedPath, err := publisher.SaveDryRunReview(publisher.SaveParams{
+				ReviewsDir: reviewsDir,
+				Repo:       o.work.repo.Name,
+				PRNumber:   o.work.pr.Number,
+				PRTitle:    o.work.pr.Title,
+				PRAuthor:   o.work.pr.Author,
+				Body:       o.body,
+			})
+			if err != nil {
+				slog.Error("failed to save dry-run review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
+				result.Errors++
+				continue
+			}
+			reviewPath = savedPath
+			result.DryRun++
+		}
+
+		if err := store.RecordReview(state.ReviewRecord{
+			Repo:            o.work.repo.Name,
+			PRNumber:        o.work.pr.Number,
+			PRTitle:         o.work.pr.Title,
+			PRAuthor:        o.work.pr.Author,
+			ReviewOutput:    o.result.Output,
+			FindingsSummary: fmt.Sprintf("%d files, %d additions, %d deletions", o.work.pr.Files, o.work.pr.Additions, o.work.pr.Deletions),
+			Mode:            mode,
+			Posted:          posted,
+			ReviewedAt:      time.Now().UTC(),
+		}); err != nil {
+			slog.Error("failed to record review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
+		}
+
+		if err := store.IncrementDailyCount(today); err != nil {
+			slog.Error("failed to increment daily count", "error", err)
+		}
+
+		if notify != nil {
+			evt := notifier.NewEvent(
+				o.work.repo.Name, o.work.pr.Number, o.work.pr.Title, o.work.pr.Author, o.work.pr.URL,
+				mode, posted, fmt.Sprintf("%d files changed", o.work.pr.Files), reviewPath,
+			)
+			if err := notify.Notify(evt); err != nil {
+				slog.Error("notification failed", "error", err)
+			}
+		}
+
+		result.Reviewed++
 	}
 
 	slog.Info("poll cycle complete",
