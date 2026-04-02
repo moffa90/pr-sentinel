@@ -62,6 +62,7 @@ func TestBuildClaudeArgs_BothInstructions(t *testing.T) {
 
 	hasOutputFormat := false
 	hasJSONSchema := false
+	hasAllowedTools := false
 	appendCount := 0
 	for i, a := range args {
 		if a == "--output-format" && i+1 < len(args) && args[i+1] == "json" {
@@ -69,6 +70,9 @@ func TestBuildClaudeArgs_BothInstructions(t *testing.T) {
 		}
 		if a == "--json-schema" {
 			hasJSONSchema = true
+		}
+		if a == "--allowedTools" {
+			hasAllowedTools = true
 		}
 		if a == "--append-system-prompt" {
 			appendCount++
@@ -80,6 +84,9 @@ func TestBuildClaudeArgs_BothInstructions(t *testing.T) {
 	}
 	if !hasJSONSchema {
 		t.Error("expected --json-schema flag")
+	}
+	if !hasAllowedTools {
+		t.Error("expected --allowedTools flag")
 	}
 	if appendCount != 2 {
 		t.Errorf("expected 2 --append-system-prompt flags, got %d", appendCount)
@@ -101,9 +108,9 @@ func TestRunReview_CompletesWithoutLeak(t *testing.T) {
 func TestBuildClaudeArgs_EmptyInstructions(t *testing.T) {
 	args := BuildClaudeArgs("review this", "", "")
 
-	// Should have: -p, prompt, --output-format, json, --json-schema, <schema>
-	if len(args) != 6 {
-		t.Errorf("expected 6 args, got %d: %v", len(args), args)
+	// Should have: -p, prompt, --output-format, json, --json-schema, <schema>, --allowedTools, <tools>
+	if len(args) != 8 {
+		t.Errorf("expected 8 args, got %d: %v", len(args), args)
 	}
 
 	for _, a := range args {

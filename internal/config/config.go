@@ -159,7 +159,46 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parsing config file: %w", err)
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return Config{}, fmt.Errorf("invalid config: %w", err)
+	}
+
 	return cfg, nil
+}
+
+// Validate checks that config values are sane and returns an error describing
+// the first problem found.
+func (c *Config) Validate() error {
+	if c.PollInterval <= 0 {
+		return fmt.Errorf("poll_interval must be positive, got %s", c.PollInterval)
+	}
+	if c.MaxReviewsPerCycle <= 0 {
+		return fmt.Errorf("max_reviews_per_cycle must be positive, got %d", c.MaxReviewsPerCycle)
+	}
+	if c.MaxReviewsPerDay <= 0 {
+		return fmt.Errorf("max_reviews_per_day must be positive, got %d", c.MaxReviewsPerDay)
+	}
+	if c.MaxParallelReviews <= 0 {
+		return fmt.Errorf("max_parallel_reviews must be positive, got %d", c.MaxParallelReviews)
+	}
+	if c.ReviewTimeout <= 0 {
+		return fmt.Errorf("review_timeout must be positive, got %s", c.ReviewTimeout)
+	}
+	if c.ReposDir == "" {
+		return fmt.Errorf("repos_dir must not be empty")
+	}
+	for i, r := range c.Repos {
+		if r.Name == "" {
+			return fmt.Errorf("repos[%d].name must not be empty", i)
+		}
+		if !strings.Contains(r.Name, "/") {
+			return fmt.Errorf("repos[%d].name must be in owner/repo format, got %q", i, r.Name)
+		}
+		if r.Mode != "" && r.Mode != ModeDryRun && r.Mode != ModeLive {
+			return fmt.Errorf("repos[%d].mode must be %q or %q, got %q", i, ModeDryRun, ModeLive, r.Mode)
+		}
+	}
+	return nil
 }
 
 // Save writes the config as YAML to the given path, creating directories as needed.
@@ -167,7 +206,7 @@ func Save(cfg Config, path string) error {
 	expanded := ExpandPath(path)
 
 	dir := filepath.Dir(expanded)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
@@ -176,7 +215,7 @@ func Save(cfg Config, path string) error {
 		return fmt.Errorf("marshalling config: %w", err)
 	}
 
-	if err := os.WriteFile(expanded, data, 0o644); err != nil {
+	if err := os.WriteFile(expanded, data, 0o600); err != nil {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 

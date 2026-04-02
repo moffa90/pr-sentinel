@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"text/template"
+
+	"github.com/moffa90/pr-sentinel/internal/config"
 )
 
 const plistLabel = "com.moffa90.pr-sentinel"
@@ -69,8 +71,8 @@ func InstallPlist() error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	logDir := filepath.Join(home, ".config", "pr-sentinel")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	logDir := config.ConfigDir()
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
@@ -84,7 +86,7 @@ func InstallPlist() error {
 		return fmt.Errorf("failed to parse plist template: %w", err)
 	}
 
-	f, err := os.Create(PlistPath())
+	f, err := os.OpenFile(PlistPath(), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to create plist file: %w", err)
 	}

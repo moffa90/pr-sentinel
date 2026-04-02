@@ -3,6 +3,7 @@ package reviewer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -101,6 +102,7 @@ func BuildClaudeArgs(prompt string, globalInstructions string, repoInstructions 
 		"-p", prompt,
 		"--output-format", "json",
 		"--json-schema", ReviewJSONSchema,
+		"--allowedTools", "Read,Glob,Grep,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)",
 	}
 
 	if globalInstructions != "" {
@@ -159,14 +161,14 @@ func RunReview(ctx context.Context, repoPath string, prompt string, globalInstru
 			slog.Error("claude stderr", "output", truncate(errStr, 500))
 		}
 
-		if ctx.Err() == context.Canceled {
+		if errors.Is(ctx.Err(), context.Canceled) {
 			return ReviewResult{
 				Output:   outStr,
 				Duration: duration,
 				Error:    fmt.Errorf("review cancelled"),
 			}
 		}
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			detail := "no output captured"
 			if errStr != "" {
 				detail = truncate(errStr, 200)

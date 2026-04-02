@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
@@ -39,7 +38,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Daily review count from state store
-	dbPath := filepath.Join(config.ConfigDir(), "state.db")
+	dbPath := state.DefaultDBPath()
 	store, err := state.Open(dbPath)
 	if err != nil {
 		fmt.Printf("%s Could not open state store: %s\n", ui.IconCross, ui.MutedStyle.Render(err.Error()))

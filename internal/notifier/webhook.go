@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -37,13 +38,25 @@ func postJSON(url string, payload interface{}) error {
 
 	resp, err := webhookClient.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("webhook request failed: %w", err)
+		return fmt.Errorf("webhook request to %s failed: %w", redactURL(url), err)
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
+		return fmt.Errorf("webhook %s returned status %d", redactURL(url), resp.StatusCode)
 	}
 	return nil
+}
+
+// redactURL returns only the host portion of a URL to avoid leaking tokens
+// embedded in webhook paths.
+func redactURL(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
+		return u.Scheme + "://" + u.Host + "/..."
+	}
+	if len(rawURL) > 30 {
+		return rawURL[:30] + "..."
+	}
+	return rawURL
 }

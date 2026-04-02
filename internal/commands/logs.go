@@ -2,9 +2,7 @@ package commands
 
 import (
 	"fmt"
-	"path/filepath"
 
-	"github.com/moffa90/pr-sentinel/internal/config"
 	"github.com/moffa90/pr-sentinel/internal/state"
 	"github.com/moffa90/pr-sentinel/internal/ui"
 	"github.com/spf13/cobra"
@@ -26,7 +24,7 @@ func NewLogsCmd() *cobra.Command {
 func runLogs(cmd *cobra.Command, args []string) error {
 	count, _ := cmd.Flags().GetInt("count")
 
-	dbPath := filepath.Join(config.ConfigDir(), "state.db")
+	dbPath := state.DefaultDBPath()
 	store, err := state.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("opening state store: %w", err)

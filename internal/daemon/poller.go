@@ -227,7 +227,11 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 		wg.Add(1)
 		go func(w reviewWork) {
 			defer wg.Done()
-			sem <- struct{}{}        // acquire
+			select {
+			case sem <- struct{}{}: // acquire
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-sem }() // release
 
 			slog.Info("reviewing PR", "repo", w.repo.Name, "pr", w.pr.Number, "title", w.pr.Title)

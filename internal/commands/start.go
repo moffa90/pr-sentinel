@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -57,7 +58,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// Open state store
-	dbPath := filepath.Join(config.ConfigDir(), "state.db")
+	dbPath := state.DefaultDBPath()
 	store, err := state.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("opening state store: %w", err)
@@ -104,7 +105,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	err = daemon.RunDaemon(ctx, cfg, store, notify)
-	if err != nil && err == context.Canceled {
+	if errors.Is(err, context.Canceled) {
 		fmt.Println() // newline after ^C
 		return nil
 	}

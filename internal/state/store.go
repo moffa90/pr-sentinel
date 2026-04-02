@@ -3,6 +3,8 @@ package state
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -20,6 +22,20 @@ type ReviewRecord struct {
 	Mode            string
 	Posted          bool
 	ReviewedAt      time.Time
+}
+
+// DefaultDBPath returns the default path to the SQLite database.
+func DefaultDBPath() string {
+	return filepath.Join(configDir(), "state.db")
+}
+
+// configDir returns the pr-sentinel config directory.
+func configDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".config", "pr-sentinel")
+	}
+	return filepath.Join(home, ".config", "pr-sentinel")
 }
 
 // Store wraps a SQLite database connection for persisting review state.
@@ -129,7 +145,10 @@ func (s *Store) GetReview(repo string, prNumber int64) (ReviewRecord, error) {
 	}
 
 	r.Posted = posted != 0
-	r.ReviewedAt, _ = time.Parse(time.RFC3339, reviewedAt)
+	r.ReviewedAt, err = time.Parse(time.RFC3339, reviewedAt)
+	if err != nil {
+		return ReviewRecord{}, fmt.Errorf("parsing reviewed_at %q: %w", reviewedAt, err)
+	}
 	return r, nil
 }
 
@@ -180,7 +199,10 @@ func (s *Store) RecentReviews(limit int) ([]ReviewRecord, error) {
 		}
 
 		r.Posted = posted != 0
-		r.ReviewedAt, _ = time.Parse(time.RFC3339, reviewedAt)
+		r.ReviewedAt, err = time.Parse(time.RFC3339, reviewedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parsing reviewed_at %q for %s#%d: %w", reviewedAt, r.Repo, r.PRNumber, err)
+		}
 		records = append(records, r)
 	}
 	return records, rows.Err()
