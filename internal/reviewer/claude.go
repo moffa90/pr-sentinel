@@ -3,6 +3,7 @@ package reviewer
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
@@ -73,15 +74,38 @@ func RunReview(ctx context.Context, repoPath string, prompt string, globalInstru
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = repoPath
 
+	// Heartbeat goroutine — logs progress every 30s
+	heartbeatCtx, heartbeatCancel := context.WithCancel(context.Background())
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				slog.Info("review in progress", "dir", repoPath, "elapsed", time.Since(start).Round(time.Second))
+			}
+		}
+	}()
+
 	output, err := cmd.CombinedOutput()
+	heartbeatCancel() // stop heartbeat
 	duration := time.Since(start)
 
 	if err != nil {
+		if ctx.Err() == context.Canceled {
+			return ReviewResult{
+				Output:   string(output),
+				Duration: duration,
+				Error:    fmt.Errorf("review cancelled"),
+			}
+		}
 		if ctx.Err() == context.DeadlineExceeded {
 			return ReviewResult{
 				Output:   string(output),
 				Duration: duration,
-				Error:    fmt.Errorf("review timed out after %s: %w", timeout, ctx.Err()),
+				Error:    fmt.Errorf("review timed out after %s", timeout),
 			}
 		}
 		return ReviewResult{

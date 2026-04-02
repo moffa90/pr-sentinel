@@ -1,6 +1,7 @@
 package reviewer
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,18 @@ func TestBuildClaudeArgs_BothInstructions(t *testing.T) {
 	}
 	if args[4] != "--append-system-prompt" || args[5] != "repo rules" {
 		t.Errorf("expected repo instructions at args[4:6], got %v", args[4:6])
+	}
+}
+
+func TestRunReview_CompletesWithoutLeak(t *testing.T) {
+	ctx := context.Background()
+	// Use a fast command that exits immediately
+	result := RunReview(ctx, t.TempDir(), "echo hello", "", "", 10*time.Second)
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	if result.Duration <= 0 {
+		t.Error("duration should be positive")
 	}
 }
 
