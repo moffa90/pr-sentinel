@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -112,9 +113,16 @@ func FetchOpenPRs(repo string, githubUser string) ([]PullRequest, []FollowUpCand
 		"-f", fmt.Sprintf("name=%s", name),
 	)
 
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, nil, fmt.Errorf("gh api graphql failed: %w", err)
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return nil, nil, fmt.Errorf("gh api graphql failed for %s: %s: %w", repo, errMsg, err)
+		}
+		return nil, nil, fmt.Errorf("gh api graphql failed for %s: %w", repo, err)
 	}
 
 	return parseGraphQLResponse(out, repo, githubUser)
@@ -209,9 +217,16 @@ func GetPRDiff(repo string, number int64) (string, error) {
 		"-R", repo,
 	)
 
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("gh pr diff failed: %w", err)
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return "", fmt.Errorf("gh pr diff %s#%d failed: %s: %w", repo, number, errMsg, err)
+		}
+		return "", fmt.Errorf("gh pr diff %s#%d failed: %w", repo, number, err)
 	}
 
 	return string(out), nil
@@ -226,8 +241,15 @@ func PostReview(repo string, number int64, body string) error {
 		"--body", body,
 	)
 
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("gh pr review failed: %w", err)
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return fmt.Errorf("gh pr review %s#%d failed: %s: %w", repo, number, errMsg, err)
+		}
+		return fmt.Errorf("gh pr review %s#%d failed: %w", repo, number, err)
 	}
 
 	return nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -75,32 +76,70 @@ CREATE TABLE IF NOT EXISTS reviewed_prs (
 	findings_summary TEXT    NOT NULL DEFAULT '',
 	mode             TEXT    NOT NULL DEFAULT '',
 	posted           INTEGER NOT NULL DEFAULT 0,
-	reviewed_at      TEXT    NOT NULL,
-	UNIQUE(repo, pr_number)
+	reviewed_at      TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS daily_counts (
 	date  TEXT PRIMARY KEY,
 	count INTEGER NOT NULL DEFAULT 0
-);`
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviewed_prs_repo_pr ON reviewed_prs(repo, pr_number);`
 
 	_, err := db.Exec(ddl)
+	if err != nil {
+		return err
+	}
+
+	// Migration: drop UNIQUE constraint from existing databases.
+	// SQLite doesn't support ALTER TABLE DROP CONSTRAINT, so we recreate.
+	return migrateDropUnique(db)
+}
+
+// migrateDropUnique recreates reviewed_prs without the UNIQUE(repo, pr_number)
+// constraint if the old schema is detected.
+func migrateDropUnique(db *sql.DB) error {
+	// Check if old UNIQUE constraint exists by trying to inspect the table SQL
+	var tableSql string
+	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviewed_prs'").Scan(&tableSql)
+	if err != nil {
+		return nil // table doesn't exist yet, DDL above created it correctly
+	}
+
+	if !strings.Contains(tableSql, "UNIQUE") {
+		return nil // already migrated
+	}
+
+	// Recreate without UNIQUE
+	const migration = `
+BEGIN;
+CREATE TABLE reviewed_prs_new (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	repo             TEXT    NOT NULL,
+	pr_number        INTEGER NOT NULL,
+	pr_title         TEXT    NOT NULL DEFAULT '',
+	pr_author        TEXT    NOT NULL DEFAULT '',
+	review_output    TEXT    NOT NULL DEFAULT '',
+	findings_summary TEXT    NOT NULL DEFAULT '',
+	mode             TEXT    NOT NULL DEFAULT '',
+	posted           INTEGER NOT NULL DEFAULT 0,
+	reviewed_at      TEXT    NOT NULL
+);
+INSERT INTO reviewed_prs_new SELECT * FROM reviewed_prs;
+DROP TABLE reviewed_prs;
+ALTER TABLE reviewed_prs_new RENAME TO reviewed_prs;
+CREATE INDEX IF NOT EXISTS idx_reviewed_prs_repo_pr ON reviewed_prs(repo, pr_number);
+COMMIT;`
+
+	_, err = db.Exec(migration)
 	return err
 }
 
-// RecordReview inserts or updates a review record (upsert on repo+pr_number).
+// RecordReview appends a review record. Multiple reviews per PR are preserved.
 func (s *Store) RecordReview(r ReviewRecord) error {
 	const query = `
 INSERT INTO reviewed_prs (repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, reviewed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(repo, pr_number) DO UPDATE SET
-	pr_title         = excluded.pr_title,
-	pr_author        = excluded.pr_author,
-	review_output    = excluded.review_output,
-	findings_summary = excluded.findings_summary,
-	mode             = excluded.mode,
-	posted           = excluded.posted,
-	reviewed_at      = excluded.reviewed_at`
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	posted := 0
 	if r.Posted {
@@ -128,7 +167,7 @@ func (s *Store) HasReviewed(repo string, prNumber int64) (bool, error) {
 	return count > 0, nil
 }
 
-// GetReview retrieves a single review record by repo and PR number.
+// GetReview retrieves the most recent review record by repo and PR number.
 func (s *Store) GetReview(repo string, prNumber int64) (ReviewRecord, error) {
 	var r ReviewRecord
 	var posted int
@@ -136,7 +175,8 @@ func (s *Store) GetReview(repo string, prNumber int64) (ReviewRecord, error) {
 
 	err := s.db.QueryRow(
 		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, reviewed_at
-		 FROM reviewed_prs WHERE repo = ? AND pr_number = ?`,
+		 FROM reviewed_prs WHERE repo = ? AND pr_number = ?
+		 ORDER BY reviewed_at DESC LIMIT 1`,
 		repo, prNumber,
 	).Scan(&r.ID, &r.Repo, &r.PRNumber, &r.PRTitle, &r.PRAuthor,
 		&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &reviewedAt)

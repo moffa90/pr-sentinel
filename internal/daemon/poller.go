@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/moffa90/pr-sentinel/internal/github"
 	"github.com/moffa90/pr-sentinel/internal/notifier"
 	"github.com/moffa90/pr-sentinel/internal/publisher"
+	"github.com/moffa90/pr-sentinel/internal/retry"
 	"github.com/moffa90/pr-sentinel/internal/reviewer"
 	"github.com/moffa90/pr-sentinel/internal/state"
 )
@@ -241,10 +243,10 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			if rr.Error == nil {
 				if rr.Review != nil {
 					body = publisher.BuildReviewBody(rr.Review.FormatMarkdown(), opts.AIDisclosure, opts.DisclosureText, w.pr.Author)
-					slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second), "verdict", rr.Review.Verdict, "findings", rr.Review.FindingsSummary())
+					slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second), "verdict", rr.Review.Verdict, "findings", rr.Review.FindingsSummary(), "cost_usd", rr.CostUSD)
 				} else {
 					body = publisher.BuildReviewBody(rr.Output, opts.AIDisclosure, opts.DisclosureText, w.pr.Author)
-					slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second))
+					slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second), "cost_usd", rr.CostUSD)
 				}
 			} else {
 				slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second))
@@ -272,7 +274,9 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 		mode := o.work.repo.Mode
 
 		if mode == config.ModeLive {
-			if err := publisher.PostLiveReview(o.work.repo.Name, o.work.pr.Number, o.body); err != nil {
+			if err := retry.Do(3, 2*time.Second, "post review", func() error {
+				return publisher.PostLiveReview(o.work.repo.Name, o.work.pr.Number, o.body)
+			}); err != nil {
 				slog.Error("failed to post review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
 				result.Errors++
 				continue
@@ -362,11 +366,26 @@ func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notif
 	slog.Info("daemon starting", "poll_interval", cfg.PollInterval)
 
 	running := false
+	cycleCount := 0
+
+	runCycle := func() {
+		running = true
+		result := RunPollCycle(ctx, cfg, store, notify)
+		running = false
+		cycleCount++
+
+		if err := WriteHealth(HealthStatus{
+			LastPoll:   time.Now().UTC(),
+			CycleCount: cycleCount,
+			LastErrors: result.Errors,
+			PID:        os.Getpid(),
+		}); err != nil {
+			slog.Error("failed to write health file", "error", err)
+		}
+	}
 
 	// Run immediately on start.
-	running = true
-	RunPollCycle(ctx, cfg, store, notify)
-	running = false
+	runCycle()
 
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
@@ -381,9 +400,7 @@ func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notif
 				slog.Info("poll cycle still running, skipping tick")
 				continue
 			}
-			running = true
-			RunPollCycle(ctx, cfg, store, notify)
-			running = false
+			runCycle()
 		}
 	}
 }

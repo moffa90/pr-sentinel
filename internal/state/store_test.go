@@ -80,39 +80,54 @@ func TestRecordReviewAndHasReviewed(t *testing.T) {
 	}
 }
 
-func TestUpsert(t *testing.T) {
+func TestMultipleReviewsPreserved(t *testing.T) {
 	s := newTestStore(t)
 
-	rec := ReviewRecord{
+	first := ReviewRecord{
 		Repo:         "owner/repo",
 		PRNumber:     10,
 		PRTitle:      "first",
 		ReviewOutput: "v1",
-		ReviewedAt:   time.Now().UTC(),
+		ReviewedAt:   time.Now().UTC().Add(-time.Hour),
 	}
-	if err := s.RecordReview(rec); err != nil {
+	if err := s.RecordReview(first); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 
-	rec.PRTitle = "updated"
-	rec.ReviewOutput = "v2"
-	rec.Posted = true
-	if err := s.RecordReview(rec); err != nil {
-		t.Fatalf("upsert: %v", err)
+	second := ReviewRecord{
+		Repo:         "owner/repo",
+		PRNumber:     10,
+		PRTitle:      "updated",
+		ReviewOutput: "v2",
+		Posted:       true,
+		ReviewedAt:   time.Now().UTC(),
+	}
+	if err := s.RecordReview(second); err != nil {
+		t.Fatalf("second insert: %v", err)
 	}
 
+	// GetReview returns the latest
 	got, err := s.GetReview("owner/repo", 10)
 	if err != nil {
 		t.Fatalf("GetReview: %v", err)
 	}
 	if got.PRTitle != "updated" {
-		t.Errorf("PRTitle after upsert = %q, want %q", got.PRTitle, "updated")
+		t.Errorf("PRTitle = %q, want %q", got.PRTitle, "updated")
 	}
 	if got.ReviewOutput != "v2" {
-		t.Errorf("ReviewOutput after upsert = %q, want %q", got.ReviewOutput, "v2")
+		t.Errorf("ReviewOutput = %q, want %q", got.ReviewOutput, "v2")
 	}
 	if !got.Posted {
-		t.Error("expected Posted=true after upsert")
+		t.Error("expected Posted=true for latest review")
+	}
+
+	// HasReviewed still works
+	reviewed, err := s.HasReviewed("owner/repo", 10)
+	if err != nil {
+		t.Fatalf("HasReviewed: %v", err)
+	}
+	if !reviewed {
+		t.Error("expected HasReviewed=true")
 	}
 }
 

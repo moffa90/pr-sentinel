@@ -27,6 +27,7 @@ type ReviewResult struct {
 	Output   string            // raw result text from Claude
 	Review   *StructuredReview // parsed structured review (nil if parsing failed)
 	Duration time.Duration
+	CostUSD  float64 // from Claude CLI envelope
 	Error    error
 }
 
@@ -194,15 +195,16 @@ func RunReview(ctx context.Context, repoPath string, prompt string, globalInstru
 	}
 
 	// Parse the structured output from claude CLI JSON envelope
-	review, rawResult, parseErr := ParseCLIOutput(outStr)
+	parsed, parseErr := ParseCLIOutput(outStr)
 	if parseErr != nil {
 		slog.Warn("failed to parse structured review, using raw output", "error", parseErr)
 	}
 
 	return ReviewResult{
-		Output:   rawResult,
-		Review:   review,
+		Output:   parsed.Raw,
+		Review:   parsed.Review,
 		Duration: duration,
+		CostUSD:  parsed.CostUSD,
 	}
 }
 

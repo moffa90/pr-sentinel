@@ -27,6 +27,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// Daemon status
 	if daemon.IsRunning() {
 		fmt.Printf("%s Daemon: %s\n", ui.IconCheck, ui.SuccessStyle.Render("running"))
+		health, hErr := daemon.ReadHealth()
+		if hErr == nil {
+			age := time.Since(health.LastPoll).Round(time.Second)
+			fmt.Printf("  Last poll: %s ago  |  Cycles: %d  |  Last errors: %d\n",
+				age, health.CycleCount, health.LastErrors)
+		}
 	} else {
 		fmt.Printf("%s Daemon: %s\n", ui.IconDot, ui.MutedStyle.Render("not running"))
 	}

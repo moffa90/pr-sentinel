@@ -93,8 +93,11 @@ func TestSaveDryRunReview(t *testing.T) {
 func TestReviewFilePath(t *testing.T) {
 	path := reviewFilePath("/tmp/reviews", "owner/repo", 42)
 
-	expected := "/tmp/reviews/owner-repo-42.md"
-	if path != expected {
-		t.Errorf("expected %q, got %q", expected, path)
+	// Filename now includes a timestamp: owner-repo-42-2026-04-02T15-04-05.md
+	if !strings.HasPrefix(path, "/tmp/reviews/owner-repo-42-") {
+		t.Errorf("expected path to start with /tmp/reviews/owner-repo-42-, got %q", path)
+	}
+	if !strings.HasSuffix(path, ".md") {
+		t.Errorf("expected path to end with .md, got %q", path)
 	}
 }

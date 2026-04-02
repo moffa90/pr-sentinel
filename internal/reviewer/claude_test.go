@@ -159,70 +159,71 @@ func TestBuildFollowUpPrompt(t *testing.T) {
 }
 
 func TestParseCLIOutput_StructuredOutput(t *testing.T) {
-	// When --json-schema is used, the result goes in structured_output
 	input := `{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"verdict":"comment","summary":"Minor issues found","findings":[{"severity":"LOW","file":"main.go","line":10,"message":"unused import"}]},"total_cost_usd":0.05}`
 
-	review, raw, err := ParseCLIOutput(input)
+	parsed, err := ParseCLIOutput(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if review == nil {
+	if parsed.Review == nil {
 		t.Fatal("expected non-nil review")
 	}
-	if review.Verdict != VerdictComment {
-		t.Errorf("verdict = %q, want %q", review.Verdict, VerdictComment)
+	if parsed.Review.Verdict != VerdictComment {
+		t.Errorf("verdict = %q, want %q", parsed.Review.Verdict, VerdictComment)
 	}
-	if review.Summary != "Minor issues found" {
-		t.Errorf("summary = %q", review.Summary)
+	if parsed.Review.Summary != "Minor issues found" {
+		t.Errorf("summary = %q", parsed.Review.Summary)
 	}
-	if len(review.Findings) != 1 {
-		t.Fatalf("expected 1 finding, got %d", len(review.Findings))
+	if len(parsed.Review.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(parsed.Review.Findings))
 	}
-	if review.Findings[0].Severity != "LOW" {
-		t.Errorf("severity = %q", review.Findings[0].Severity)
+	if parsed.CostUSD != 0.05 {
+		t.Errorf("CostUSD = %f, want 0.05", parsed.CostUSD)
 	}
-	if raw == "" {
+	if parsed.Raw == "" {
 		t.Error("raw should not be empty")
 	}
 }
 
 func TestParseCLIOutput_FallbackResultField(t *testing.T) {
-	// Fallback: structured data in result field (no --json-schema)
-	input := `{"type":"result","subtype":"success","is_error":false,"result":"{\"verdict\":\"approve\",\"summary\":\"Looks good\",\"findings\":[]}","total_cost_usd":0.05}`
+	input := `{"type":"result","subtype":"success","is_error":false,"result":"{\"verdict\":\"approve\",\"summary\":\"Looks good\",\"findings\":[]}","total_cost_usd":0.12}`
 
-	review, _, err := ParseCLIOutput(input)
+	parsed, err := ParseCLIOutput(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if review == nil {
+	if parsed.Review == nil {
 		t.Fatal("expected non-nil review")
 	}
-	if review.Verdict != VerdictApprove {
-		t.Errorf("verdict = %q, want %q", review.Verdict, VerdictApprove)
+	if parsed.Review.Verdict != VerdictApprove {
+		t.Errorf("verdict = %q, want %q", parsed.Review.Verdict, VerdictApprove)
+	}
+	if parsed.CostUSD != 0.12 {
+		t.Errorf("CostUSD = %f, want 0.12", parsed.CostUSD)
 	}
 }
 
 func TestParseCLIOutput_NotJSON(t *testing.T) {
-	review, raw, err := ParseCLIOutput("just some text")
+	parsed, err := ParseCLIOutput("just some text")
 	if err == nil {
 		t.Error("expected error for non-JSON input")
 	}
-	if review != nil {
+	if parsed.Review != nil {
 		t.Error("expected nil review")
 	}
-	if raw != "just some text" {
-		t.Errorf("raw = %q, want original text", raw)
+	if parsed.Raw != "just some text" {
+		t.Errorf("raw = %q, want original text", parsed.Raw)
 	}
 }
 
 func TestParseCLIOutput_EnvelopeError(t *testing.T) {
 	input := `{"type":"result","subtype":"error","is_error":true,"result":"something went wrong","total_cost_usd":0}`
 
-	review, _, err := ParseCLIOutput(input)
+	parsed, err := ParseCLIOutput(input)
 	if err == nil {
 		t.Error("expected error for error envelope")
 	}
-	if review != nil {
+	if parsed.Review != nil {
 		t.Error("expected nil review on error")
 	}
 }

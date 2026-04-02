@@ -86,34 +86,41 @@ const ReviewJSONSchema = `{
 // structured review. Returns the parsed review and the raw result string.
 // If parsing fails at any stage, returns an error but still provides
 // whatever raw output was available.
-func ParseCLIOutput(data string) (*StructuredReview, string, error) {
+// ParseResult holds the parsed output from a claude CLI invocation.
+type ParseResult struct {
+	Review  *StructuredReview
+	Raw     string
+	CostUSD float64
+}
+
+func ParseCLIOutput(data string) (ParseResult, error) {
 	// Parse the outer envelope
 	var env claudeEnvelope
 	if err := json.Unmarshal([]byte(data), &env); err != nil {
 		// Not a JSON envelope — treat entire output as raw text
-		return nil, data, fmt.Errorf("not a claude CLI JSON envelope: %w", err)
+		return ParseResult{Raw: data}, fmt.Errorf("not a claude CLI JSON envelope: %w", err)
 	}
 
 	if env.IsError {
-		return nil, env.Result, fmt.Errorf("claude returned error (%s): %s", env.Subtype, env.Result)
+		return ParseResult{Raw: env.Result, CostUSD: env.CostUSD}, fmt.Errorf("claude returned error (%s): %s", env.Subtype, env.Result)
 	}
 
 	// Prefer structured_output field (populated when --json-schema is used)
 	if env.StructuredOutput != nil {
 		raw, _ := json.Marshal(env.StructuredOutput)
-		return env.StructuredOutput, string(raw), nil
+		return ParseResult{Review: env.StructuredOutput, Raw: string(raw), CostUSD: env.CostUSD}, nil
 	}
 
 	// Fallback: try to parse the result field as JSON
 	if env.Result != "" {
 		var review StructuredReview
 		if err := json.Unmarshal([]byte(env.Result), &review); err != nil {
-			return nil, env.Result, fmt.Errorf("failed to parse review JSON: %w", err)
+			return ParseResult{Raw: env.Result, CostUSD: env.CostUSD}, fmt.Errorf("failed to parse review JSON: %w", err)
 		}
-		return &review, env.Result, nil
+		return ParseResult{Review: &review, Raw: env.Result, CostUSD: env.CostUSD}, nil
 	}
 
-	return nil, "", fmt.Errorf("claude returned empty result")
+	return ParseResult{CostUSD: env.CostUSD}, fmt.Errorf("claude returned empty result")
 }
 
 // FindingsSummary returns a human-readable summary of findings by severity.

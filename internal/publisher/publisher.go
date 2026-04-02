@@ -3,6 +3,7 @@ package publisher
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -72,8 +73,9 @@ func SaveDryRunReview(params SaveParams) (string, error) {
 }
 
 // reviewFilePath returns the file path for a dry-run review markdown file.
-// Slashes in the repo name are replaced with dashes.
+// Includes a timestamp so follow-up reviews don't overwrite previous ones.
 func reviewFilePath(dir string, repo string, prNumber int64) string {
 	safeName := strings.ReplaceAll(repo, "/", "-")
-	return fmt.Sprintf("%s/%s-%d.md", dir, safeName, prNumber)
+	ts := time.Now().UTC().Format("2006-01-02T15-04-05")
+	return filepath.Join(dir, fmt.Sprintf("%s-%d-%s.md", safeName, prNumber, ts))
 }
