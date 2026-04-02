@@ -18,11 +18,12 @@ const (
 
 // Default values
 const (
-	DefaultPollInterval     = 10 * time.Minute
-	DefaultMaxReviewsCycle  = 5
-	DefaultMaxReviewsDay    = 20
-	DefaultReviewTimeout    = 5 * time.Minute
-	DefaultDisclosureText   = "> AI-assisted review by [pr-sentinel](https://github.com/moffa90/pr-sentinel)"
+	DefaultPollInterval        = 10 * time.Minute
+	DefaultMaxReviewsCycle     = 5
+	DefaultMaxReviewsDay       = 20
+	DefaultReviewTimeout       = 5 * time.Minute
+	DefaultDisclosureText      = "> AI-assisted review by [pr-sentinel](https://github.com/moffa90/pr-sentinel)"
+	DefaultMaxParallelReviews  = 3
 )
 
 // Config is the top-level configuration.
@@ -30,6 +31,7 @@ type Config struct {
 	PollInterval       time.Duration       `yaml:"poll_interval"`
 	MaxReviewsPerCycle int                 `yaml:"max_reviews_per_cycle"`
 	MaxReviewsPerDay   int                 `yaml:"max_reviews_per_day"`
+	MaxParallelReviews int                 `yaml:"max_parallel_reviews"`
 	ReposDir           string              `yaml:"repos_dir"`
 	ReviewTimeout      time.Duration       `yaml:"review_timeout"`
 	GitHubUser         string              `yaml:"github_user"`
@@ -86,6 +88,7 @@ func DefaultConfig() Config {
 		PollInterval:       DefaultPollInterval,
 		MaxReviewsPerCycle: DefaultMaxReviewsCycle,
 		MaxReviewsPerDay:   DefaultMaxReviewsDay,
+		MaxParallelReviews: DefaultMaxParallelReviews,
 		ReposDir:           "~/Git",
 		ReviewTimeout:      DefaultReviewTimeout,
 		GitHubUser:         "",

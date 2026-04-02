@@ -221,3 +221,29 @@ func TestSaveCreatesDirectories(t *testing.T) {
 		t.Error("config file should exist after Save")
 	}
 }
+
+func TestDefaultConfig_MaxParallelReviews(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.MaxParallelReviews != 3 {
+		t.Errorf("MaxParallelReviews = %d, want 3", cfg.MaxParallelReviews)
+	}
+}
+
+func TestSaveAndLoad_MaxParallelReviews(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	cfg := DefaultConfig()
+	cfg.MaxParallelReviews = 5
+	if err := Save(cfg, path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.MaxParallelReviews != 5 {
+		t.Errorf("MaxParallelReviews = %d, want 5", loaded.MaxParallelReviews)
+	}
+}
