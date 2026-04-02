@@ -97,13 +97,13 @@ const prQuery = `query($owner: String!, $name: String!) {
   }
 }`
 
-// FetchOpenPRs runs `gh api graphql` to fetch open PRs for the given repo,
-// then filters out drafts, PRs authored by githubUser, and PRs already
-// reviewed by githubUser.
-func FetchOpenPRs(repo string, githubUser string) ([]PullRequest, error) {
+// FetchOpenPRs runs `gh api graphql` to fetch open PRs for the given repo.
+// Returns two lists: new PRs (never reviewed by githubUser) and follow-up
+// candidates (previously reviewed/commented by githubUser with new commits since).
+func FetchOpenPRs(repo string, githubUser string) ([]PullRequest, []FollowUpCandidate, error) {
 	owner, name := splitRepo(repo)
 	if owner == "" || name == "" {
-		return nil, fmt.Errorf("invalid repo format %q: expected owner/repo", repo)
+		return nil, nil, fmt.Errorf("invalid repo format %q: expected owner/repo", repo)
 	}
 
 	cmd := exec.Command("gh", "api", "graphql",
@@ -114,53 +114,33 @@ func FetchOpenPRs(repo string, githubUser string) ([]PullRequest, error) {
 
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("gh api graphql failed: %w", err)
+		return nil, nil, fmt.Errorf("gh api graphql failed: %w", err)
 	}
 
 	return parseGraphQLResponse(out, repo, githubUser)
 }
 
 // parseGraphQLResponse parses the JSON output from `gh api graphql` and
-// filters PRs. Exported for testing.
-func parseGraphQLResponse(data []byte, repo string, githubUser string) ([]PullRequest, error) {
+// categorises PRs into new (never reviewed) and follow-up candidates
+// (reviewed/commented by githubUser with new commits since).
+func parseGraphQLResponse(data []byte, repo string, githubUser string) ([]PullRequest, []FollowUpCandidate, error) {
 	var resp graphQLResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse GraphQL response: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse GraphQL response: %w", err)
 	}
 
 	var prs []PullRequest
+	var followUps []FollowUpCandidate
+
 	for _, node := range resp.Data.Repository.PullRequests.Nodes {
-		// Filter out drafts
 		if node.IsDraft {
 			continue
 		}
-
-		// Filter out PRs authored by githubUser
 		if strings.EqualFold(node.Author.Login, githubUser) {
 			continue
 		}
 
-		// Filter out PRs already reviewed or commented on by githubUser
-		alreadyReviewed := false
-		for _, review := range node.Reviews.Nodes {
-			if strings.EqualFold(review.Author.Login, githubUser) {
-				alreadyReviewed = true
-				break
-			}
-		}
-		if !alreadyReviewed {
-			for _, comment := range node.Comments.Nodes {
-				if strings.EqualFold(comment.Author.Login, githubUser) {
-					alreadyReviewed = true
-					break
-				}
-			}
-		}
-		if alreadyReviewed {
-			continue
-		}
-
-		prs = append(prs, PullRequest{
+		pr := PullRequest{
 			Repo:      repo,
 			Number:    node.Number,
 			Title:     node.Title,
@@ -171,10 +151,55 @@ func parseGraphQLResponse(data []byte, repo string, githubUser string) ([]PullRe
 			Files:     node.ChangedFiles,
 			Additions: node.Additions,
 			Deletions: node.Deletions,
-		})
+		}
+
+		// Find the latest time the user reviewed or commented
+		var lastUserActivity time.Time
+		for _, review := range node.Reviews.Nodes {
+			if strings.EqualFold(review.Author.Login, githubUser) {
+				if review.PublishedAt.After(lastUserActivity) {
+					lastUserActivity = review.PublishedAt
+				}
+			}
+		}
+		for _, comment := range node.Comments.Nodes {
+			if strings.EqualFold(comment.Author.Login, githubUser) {
+				if comment.CreatedAt.After(lastUserActivity) {
+					lastUserActivity = comment.CreatedAt
+				}
+			}
+		}
+
+		if lastUserActivity.IsZero() {
+			// User has never reviewed/commented — new PR
+			prs = append(prs, pr)
+			continue
+		}
+
+		// User has reviewed/commented — check for new commits since
+		var newCommitSince string
+		newCommitCount := 0
+		for _, c := range node.Commits.Nodes {
+			if c.Commit.CommittedDate.After(lastUserActivity) {
+				if newCommitCount == 0 {
+					newCommitSince = c.Commit.OID
+				}
+				newCommitCount++
+			}
+		}
+
+		if newCommitCount > 0 {
+			followUps = append(followUps, FollowUpCandidate{
+				PullRequest:    pr,
+				LastCommentAt:  lastUserActivity,
+				NewCommitSince: newCommitSince,
+				NewCommitCount: newCommitCount,
+			})
+		}
+		// No new commits since last comment → skip entirely
 	}
 
-	return prs, nil
+	return prs, followUps, nil
 }
 
 // GetPRDiff returns the diff for a given PR by running `gh pr diff`.

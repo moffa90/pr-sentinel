@@ -100,7 +100,7 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 
 		slog.Info("polling repo", "repo", repo.Name, "mode", repo.Mode)
 
-		prs, err := github.FetchOpenPRs(repo.Name, opts.GitHubUser)
+		prs, followUpCandidates, err := github.FetchOpenPRs(repo.Name, opts.GitHubUser)
 		if err != nil {
 			slog.Error("failed to fetch PRs", "repo", repo.Name, "error", err)
 			result.Errors++
@@ -160,6 +160,50 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			cycleCount++
 			dailyCount++
 		}
+
+		// Collect follow-up work items (PRs with new commits since last user comment)
+		for _, candidate := range followUpCandidates {
+			if ctx.Err() != nil {
+				break
+			}
+
+			if shouldSkip(opts, cycleCount, dailyCount) {
+				slog.Info("review limit reached, skipping follow-up", "repo", repo.Name, "pr", candidate.Number)
+				result.Skipped++
+				continue
+			}
+
+			diff, err := github.GetPRDiff(repo.Name, candidate.Number)
+			if err != nil {
+				slog.Error("failed to get follow-up diff", "repo", repo.Name, "pr", candidate.Number, "error", err)
+				result.Errors++
+				continue
+			}
+
+			prompt := reviewer.BuildReviewPrompt(reviewer.ReviewParams{
+				Repo:     repo.Name,
+				PRNumber: candidate.Number,
+				PRTitle:  candidate.Title,
+				PRAuthor: candidate.Author,
+				Diff:     diff,
+				Files:    candidate.Files,
+				Adds:     candidate.Additions,
+				Dels:     candidate.Deletions,
+			})
+
+			repoPath := config.ExpandPath(filepath.Join(cfg.ReposDir, filepath.Base(repo.Name)))
+			work = append(work, reviewWork{
+				repo:     repo,
+				pr:       candidate.PullRequest,
+				diff:     diff,
+				prompt:   prompt,
+				repoPath: repoPath,
+			})
+
+			slog.Info("queued follow-up review", "repo", repo.Name, "pr", candidate.Number, "new_commits", candidate.NewCommitCount)
+			cycleCount++
+			dailyCount++
+		}
 	}
 
 	slog.Debug("work items collected", "items", len(work))
@@ -197,9 +241,16 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			rr := reviewer.RunReview(ctx, w.repoPath, w.prompt, opts.ReviewInstructions, w.repo.ReviewInstructions, opts.ReviewTimeout)
 			body := ""
 			if rr.Error == nil {
-				body = publisher.BuildReviewBody(rr.Output, opts.AIDisclosure, opts.DisclosureText, w.pr.Author)
+				if rr.Review != nil {
+					body = publisher.BuildReviewBody(rr.Review.FormatMarkdown(), opts.AIDisclosure, opts.DisclosureText, w.pr.Author)
+					slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second), "verdict", rr.Review.Verdict, "findings", rr.Review.FindingsSummary())
+				} else {
+					body = publisher.BuildReviewBody(rr.Output, opts.AIDisclosure, opts.DisclosureText, w.pr.Author)
+					slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second))
+				}
+			} else {
+				slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second))
 			}
-			slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second))
 			outcomes <- reviewOutcome{work: w, result: rr, body: body}
 		}(w)
 	}
@@ -249,13 +300,18 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			result.DryRun++
 		}
 
+		findingsSummary := fmt.Sprintf("%d files, %d additions, %d deletions", o.work.pr.Files, o.work.pr.Additions, o.work.pr.Deletions)
+		if o.result.Review != nil {
+			findingsSummary = o.result.Review.FindingsSummary()
+		}
+
 		if err := store.RecordReview(state.ReviewRecord{
 			Repo:            o.work.repo.Name,
 			PRNumber:        o.work.pr.Number,
 			PRTitle:         o.work.pr.Title,
 			PRAuthor:        o.work.pr.Author,
 			ReviewOutput:    o.result.Output,
-			FindingsSummary: fmt.Sprintf("%d files, %d additions, %d deletions", o.work.pr.Files, o.work.pr.Additions, o.work.pr.Deletions),
+			FindingsSummary: findingsSummary,
 			Mode:            mode,
 			Posted:          posted,
 			ReviewedAt:      time.Now().UTC(),
@@ -267,11 +323,21 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			slog.Error("failed to increment daily count", "error", err)
 		}
 
+		evt := notifier.NewEvent(
+			o.work.repo.Name, o.work.pr.Number, o.work.pr.Title, o.work.pr.Author, o.work.pr.URL,
+			mode, posted, findingsSummary, reviewPath,
+		)
+
+		// Send to per-repo Teams webhook if configured
+		if o.work.repo.TeamsWebhook != "" {
+			repoTeams := notifier.NewTeamsNotifier(o.work.repo.TeamsWebhook)
+			if err := repoTeams.Notify(evt); err != nil {
+				slog.Error("repo teams notification failed", "repo", o.work.repo.Name, "error", err)
+			}
+		}
+
+		// Send to global notifiers
 		if notify != nil {
-			evt := notifier.NewEvent(
-				o.work.repo.Name, o.work.pr.Number, o.work.pr.Title, o.work.pr.Author, o.work.pr.URL,
-				mode, posted, fmt.Sprintf("%d files changed", o.work.pr.Files), reviewPath,
-			)
 			if err := notify.Notify(evt); err != nil {
 				slog.Error("notification failed", "error", err)
 			}
@@ -292,12 +358,17 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 }
 
 // RunDaemon starts the poll loop. It runs a cycle immediately, then on every
-// tick of cfg.PollInterval until the context is cancelled.
+// tick of cfg.PollInterval until the context is cancelled. If a cycle is still
+// running when the next tick fires, the tick is skipped.
 func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notify *notifier.Dispatcher) error {
 	slog.Info("daemon starting", "poll_interval", cfg.PollInterval)
 
+	running := false
+
 	// Run immediately on start.
+	running = true
 	RunPollCycle(ctx, cfg, store, notify)
+	running = false
 
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
@@ -308,7 +379,13 @@ func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notif
 			slog.Info("daemon stopping", "reason", ctx.Err())
 			return ctx.Err()
 		case <-ticker.C:
+			if running {
+				slog.Info("poll cycle still running, skipping tick")
+				continue
+			}
+			running = true
 			RunPollCycle(ctx, cfg, store, notify)
+			running = false
 		}
 	}
 }
