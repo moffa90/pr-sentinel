@@ -66,7 +66,6 @@ func shouldSkip(opts PollOptions, cycleCount int, dailyCount int) bool {
 type reviewWork struct {
 	repo     config.RepoConfig
 	pr       github.PullRequest
-	diff     string
 	prompt   string
 	repoPath string
 }
@@ -130,19 +129,11 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 				continue
 			}
 
-			diff, err := github.GetPRDiff(repo.Name, pr.Number)
-			if err != nil {
-				slog.Error("failed to get PR diff", "repo", repo.Name, "pr", pr.Number, "error", err)
-				result.Errors++
-				continue
-			}
-
 			prompt := reviewer.BuildReviewPrompt(reviewer.ReviewParams{
 				Repo:     repo.Name,
 				PRNumber: pr.Number,
 				PRTitle:  pr.Title,
 				PRAuthor: pr.Author,
-				Diff:     diff,
 				Files:    pr.Files,
 				Adds:     pr.Additions,
 				Dels:     pr.Deletions,
@@ -152,7 +143,6 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			work = append(work, reviewWork{
 				repo:     repo,
 				pr:       pr,
-				diff:     diff,
 				prompt:   prompt,
 				repoPath: repoPath,
 			})
@@ -173,19 +163,11 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 				continue
 			}
 
-			diff, err := github.GetPRDiff(repo.Name, candidate.Number)
-			if err != nil {
-				slog.Error("failed to get follow-up diff", "repo", repo.Name, "pr", candidate.Number, "error", err)
-				result.Errors++
-				continue
-			}
-
 			prompt := reviewer.BuildReviewPrompt(reviewer.ReviewParams{
 				Repo:     repo.Name,
 				PRNumber: candidate.Number,
 				PRTitle:  candidate.Title,
 				PRAuthor: candidate.Author,
-				Diff:     diff,
 				Files:    candidate.Files,
 				Adds:     candidate.Additions,
 				Dels:     candidate.Deletions,
@@ -195,7 +177,6 @@ func RunPollCycle(ctx context.Context, cfg config.Config, store *state.Store, no
 			work = append(work, reviewWork{
 				repo:     repo,
 				pr:       candidate.PullRequest,
-				diff:     diff,
 				prompt:   prompt,
 				repoPath: repoPath,
 			})

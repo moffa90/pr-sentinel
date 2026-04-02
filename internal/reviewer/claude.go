@@ -17,7 +17,6 @@ type ReviewParams struct {
 	PRNumber int64
 	PRTitle  string
 	PRAuthor string
-	Diff     string
 	Files    int
 	Adds     int
 	Dels     int
@@ -46,18 +45,8 @@ func BuildReviewPrompt(p ReviewParams) string {
 	b.WriteString("- Set verdict to \"approve\" if no issues found, \"comment\" for minor observations, or \"request-changes\" for issues that must be fixed\n")
 	b.WriteString("- Provide a concise summary (1-3 sentences) of the overall review\n\n")
 
-	b.WriteString("Respond with a JSON object matching this structure:\n")
-	b.WriteString("{\n")
-	b.WriteString("  \"verdict\": \"approve\" | \"comment\" | \"request-changes\",\n")
-	b.WriteString("  \"summary\": \"concise review summary\",\n")
-	b.WriteString("  \"findings\": [\n")
-	b.WriteString("    { \"severity\": \"HIGH|MEDIUM|LOW\", \"file\": \"path/to/file.go\", \"line\": 42, \"message\": \"description\" }\n")
-	b.WriteString("  ]\n")
-	b.WriteString("}\n\n")
-
-	b.WriteString("Diff:\n```\n")
-	b.WriteString(p.Diff)
-	b.WriteString("\n```\n")
+	b.WriteString("Use `gh pr diff " + fmt.Sprintf("%d", p.PRNumber) + " -R " + p.Repo + "` to fetch the diff and review the changes.\n")
+	b.WriteString("You are running inside the repo directory with full access to the codebase.\n")
 
 	return b.String()
 }
@@ -68,7 +57,6 @@ type FollowUpParams struct {
 	PRNumber       int64
 	PRTitle        string
 	PRAuthor       string
-	Diff           string
 	Files          int
 	Adds           int
 	Dels           int
@@ -101,9 +89,8 @@ func BuildFollowUpPrompt(p FollowUpParams) string {
 	b.WriteString("3. Note any NEW issues introduced by the new commits\n")
 	b.WriteString("4. If all previous issues are resolved and no new issues found, approve the changes\n\n")
 
-	b.WriteString("## Current Diff\n\n```\n")
-	b.WriteString(p.Diff)
-	b.WriteString("\n```\n")
+	b.WriteString("Use `gh pr diff " + fmt.Sprintf("%d", p.PRNumber) + " -R " + p.Repo + "` to fetch the diff and review the changes.\n")
+	b.WriteString("You are running inside the repo directory with full access to the codebase.\n")
 
 	return b.String()
 }

@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
-	"github.com/moffa90/pr-sentinel/internal/github"
 	"github.com/moffa90/pr-sentinel/internal/publisher"
 	"github.com/moffa90/pr-sentinel/internal/reviewer"
 	"github.com/moffa90/pr-sentinel/internal/ui"
@@ -81,19 +80,10 @@ func runReview(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("%s Mode: %s\n\n", ui.IconDot, ui.ModeBadge(mode))
 
-	// Fetch diff
-	fmt.Printf("%s Fetching PR diff...\n", ui.IconDot)
-	diff, err := github.GetPRDiff(repo, prNumber)
-	if err != nil {
-		return fmt.Errorf("fetching diff: %w", err)
-	}
-	fmt.Printf("  %s Diff fetched (%d bytes)\n", ui.IconCheck, len(diff))
-
 	// Build review prompt
 	params := reviewer.ReviewParams{
 		Repo:     repo,
 		PRNumber: prNumber,
-		Diff:     diff,
 	}
 	prompt := reviewer.BuildReviewPrompt(params)
 

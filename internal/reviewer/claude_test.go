@@ -20,7 +20,6 @@ func TestBuildReviewPrompt(t *testing.T) {
 		PRNumber: 42,
 		PRTitle:  "Add feature X",
 		PRAuthor: "johndoe",
-		Diff:     "+ added line\n- removed line",
 		Files:    3,
 		Adds:     10,
 		Dels:     5,
@@ -35,8 +34,6 @@ func TestBuildReviewPrompt(t *testing.T) {
 		{"PR reference", "owner/repo#42"},
 		{"title", "Add feature X"},
 		{"author", "@johndoe"},
-		{"diff content added", "+ added line"},
-		{"diff content removed", "- removed line"},
 		{"files stat", "3 files changed"},
 		{"additions stat", "10 additions"},
 		{"deletions stat", "5 deletions"},
@@ -44,7 +41,7 @@ func TestBuildReviewPrompt(t *testing.T) {
 		{"severity MEDIUM", "MEDIUM"},
 		{"severity LOW", "LOW"},
 		{"verdict instruction", "verdict"},
-		{"JSON structure", "findings"},
+		{"gh pr diff command", "gh pr diff"},
 	}
 
 	for _, c := range checks {
@@ -122,7 +119,6 @@ func TestBuildFollowUpPrompt(t *testing.T) {
 		PRNumber:       51,
 		PRTitle:        "fix: update auth",
 		PRAuthor:       "bob",
-		Diff:           "+ new line\n- old line",
 		Files:          3,
 		Adds:           10,
 		Dels:           5,
@@ -142,7 +138,7 @@ func TestBuildFollowUpPrompt(t *testing.T) {
 		{"follow-up label", "Follow-up review"},
 		{"previous review", "Missing error handling"},
 		{"new commit count", "2 new commit"},
-		{"diff", "+ new line"},
+		{"gh pr diff command", "gh pr diff"},
 		{"addresses instruction", "whether the new commits address"},
 	}
 
