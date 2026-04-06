@@ -429,8 +429,44 @@ func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notif
 	slog.Info("daemon starting", "poll_interval", cfg.PollInterval)
 
 	cycleCount := 0
+	wasOutsideSchedule := false
 
 	runCycle := func() {
+		// Schedule guard: skip cycle if outside configured window
+		if !cfg.Schedule.IsEmpty() {
+			now := time.Now()
+			if !cfg.Schedule.IsActive(now) {
+				if !wasOutsideSchedule {
+					next := cfg.Schedule.NextWindowOpen(now)
+					if !next.IsZero() {
+						slog.Info("schedule window closed, pausing", "next_open", next.Format("Mon 15:04 MST"))
+					} else {
+						slog.Info("schedule window closed, pausing")
+					}
+					wasOutsideSchedule = true
+				} else {
+					slog.Debug("outside schedule, skipping cycle")
+				}
+
+				if err := WriteHealth(HealthStatus{
+					LastPoll:         time.Now().UTC(),
+					CycleCount:       cycleCount,
+					LastErrors:       0,
+					PID:              os.Getpid(),
+					ScheduleActive:   false,
+					NextWindowChange: cfg.Schedule.NextWindowOpen(now).Format(time.RFC3339),
+				}); err != nil {
+					slog.Error("failed to write health file", "error", err)
+				}
+				return
+			}
+
+			if wasOutsideSchedule {
+				slog.Info("schedule window open, resuming polls")
+				wasOutsideSchedule = false
+			}
+		}
+
 		// Hot-reload config each cycle
 		freshCfg, loadErr := config.Load(config.DefaultConfigPath())
 		if loadErr != nil {
@@ -444,10 +480,11 @@ func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notif
 		cycleCount++
 
 		if err := WriteHealth(HealthStatus{
-			LastPoll:   time.Now().UTC(),
-			CycleCount: cycleCount,
-			LastErrors: result.Errors,
-			PID:        os.Getpid(),
+			LastPoll:       time.Now().UTC(),
+			CycleCount:     cycleCount,
+			LastErrors:     result.Errors,
+			PID:            os.Getpid(),
+			ScheduleActive: true,
 		}); err != nil {
 			slog.Error("failed to write health file", "error", err)
 		}

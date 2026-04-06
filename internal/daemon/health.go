@@ -11,10 +11,12 @@ import (
 
 // HealthStatus represents the daemon's last known state.
 type HealthStatus struct {
-	LastPoll   time.Time `json:"last_poll"`
-	CycleCount int       `json:"cycle_count"`
-	LastErrors int       `json:"last_errors"`
-	PID        int       `json:"pid"`
+	LastPoll         time.Time `json:"last_poll"`
+	CycleCount       int       `json:"cycle_count"`
+	LastErrors       int       `json:"last_errors"`
+	PID              int       `json:"pid"`
+	ScheduleActive   bool      `json:"schedule_active"`
+	NextWindowChange string    `json:"next_window_change,omitempty"`
 }
 
 // HealthPath returns the path to the health status file.
