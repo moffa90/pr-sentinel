@@ -271,3 +271,79 @@ func TestValidate_Schedule(t *testing.T) {
 		t.Error("invalid day should fail validation")
 	}
 }
+
+func TestValidate_AutoMerge(t *testing.T) {
+	base := DefaultConfig()
+	base.GitHubUser = "testuser"
+
+	t.Run("valid auto_merge config", func(t *testing.T) {
+		cfg := base
+		cfg.Repos = []RepoConfig{
+			{
+				Name: "owner/repo",
+				Path: "/tmp",
+				Mode: ModeLive,
+				AutoMerge: AutoMergeConfig{
+					Enabled:      true,
+					Strategy:     "squash",
+					DeleteBranch: true,
+				},
+			},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("valid auto_merge should pass: %v", err)
+		}
+	})
+
+	t.Run("invalid strategy", func(t *testing.T) {
+		cfg := base
+		cfg.Repos = []RepoConfig{
+			{
+				Name: "owner/repo",
+				Path: "/tmp",
+				Mode: ModeLive,
+				AutoMerge: AutoMergeConfig{
+					Enabled:  true,
+					Strategy: "fast-forward",
+				},
+			},
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Error("invalid strategy should fail validation")
+		}
+	})
+
+	t.Run("enabled without strategy", func(t *testing.T) {
+		cfg := base
+		cfg.Repos = []RepoConfig{
+			{
+				Name: "owner/repo",
+				Path: "/tmp",
+				Mode: ModeLive,
+				AutoMerge: AutoMergeConfig{
+					Enabled: true,
+				},
+			},
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Error("enabled without strategy should fail validation")
+		}
+	})
+
+	t.Run("disabled auto_merge needs no strategy", func(t *testing.T) {
+		cfg := base
+		cfg.Repos = []RepoConfig{
+			{
+				Name: "owner/repo",
+				Path: "/tmp",
+				Mode: ModeDryRun,
+				AutoMerge: AutoMergeConfig{
+					Enabled: false,
+				},
+			},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("disabled auto_merge should pass without strategy: %v", err)
+		}
+	})
+}

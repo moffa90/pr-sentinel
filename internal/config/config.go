@@ -77,13 +77,22 @@ type WebhookConfig struct {
 	URL     string `yaml:"url"`
 }
 
+// AutoMergeConfig holds per-repo auto-merge settings.
+type AutoMergeConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Strategy     string `yaml:"strategy"`
+	DeleteBranch bool   `yaml:"delete_branch"`
+	RequireLabel string `yaml:"require_label"`
+}
+
 // RepoConfig holds per-repository settings.
 type RepoConfig struct {
-	Name               string `yaml:"name"`
-	Path               string `yaml:"path"`
-	Mode               string `yaml:"mode"`
-	ReviewInstructions string `yaml:"review_instructions"`
-	TeamsWebhook       string `yaml:"teams_webhook"`
+	Name               string          `yaml:"name"`
+	Path               string          `yaml:"path"`
+	Mode               string          `yaml:"mode"`
+	ReviewInstructions string          `yaml:"review_instructions"`
+	TeamsWebhook       string          `yaml:"teams_webhook"`
+	AutoMerge          AutoMergeConfig `yaml:"auto_merge"`
 }
 
 // DefaultConfig returns a Config populated with default values.
@@ -199,6 +208,15 @@ func (c *Config) Validate() error {
 		}
 		if r.Mode != "" && r.Mode != ModeDryRun && r.Mode != ModeLive {
 			return fmt.Errorf("repos[%d].mode must be %q or %q, got %q", i, ModeDryRun, ModeLive, r.Mode)
+		}
+		if r.AutoMerge.Enabled {
+			if r.AutoMerge.Strategy == "" {
+				return fmt.Errorf("repos[%d].auto_merge.strategy must be set when enabled", i)
+			}
+			validStrategies := map[string]bool{"merge": true, "squash": true, "rebase": true}
+			if !validStrategies[r.AutoMerge.Strategy] {
+				return fmt.Errorf("repos[%d].auto_merge.strategy must be merge, squash, or rebase, got %q", i, r.AutoMerge.Strategy)
+			}
 		}
 	}
 	if err := c.Schedule.Validate(); err != nil {
