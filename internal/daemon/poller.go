@@ -303,8 +303,14 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 		mode := o.work.repo.Mode
 
 		if mode == config.ModeLive {
+			// GitHub doesn't allow approving or requesting changes on your own PR.
+			// Fall back to --comment when reviewing self-authored PRs.
+			postVerdict := verdict
+			if o.work.repo.ReviewOwnPRs && strings.EqualFold(o.work.pr.Author, opts.GitHubUser) {
+				postVerdict = "comment"
+			}
 			if err := retry.Do(3, 2*time.Second, "post review", func() error {
-				return publisher.PostLiveReview(o.work.repo.Name, o.work.pr.Number, o.body, verdict)
+				return publisher.PostLiveReview(o.work.repo.Name, o.work.pr.Number, o.body, postVerdict)
 			}); err != nil {
 				slog.Error("failed to post review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
 				result.Errors++
