@@ -503,13 +503,17 @@ func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notif
 					slog.Debug("outside schedule, skipping cycle")
 				}
 
+				nextChange := ""
+				if next := cfg.Schedule.NextWindowOpen(now); !next.IsZero() {
+					nextChange = next.Format(time.RFC3339)
+				}
 				if err := WriteHealth(HealthStatus{
 					LastPoll:         time.Now().UTC(),
 					CycleCount:       cycleCount,
 					LastErrors:       0,
 					PID:              os.Getpid(),
 					ScheduleActive:   false,
-					NextWindowChange: cfg.Schedule.NextWindowOpen(now).Format(time.RFC3339),
+					NextWindowChange: nextChange,
 				}); err != nil {
 					slog.Error("failed to write health file", "error", err)
 				}
