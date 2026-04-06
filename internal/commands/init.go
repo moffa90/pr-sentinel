@@ -126,6 +126,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 #   start_time: "08:00"
 #   end_time: "17:00"
 #   timezone: "America/New_York"
+
+# Auto-merge: per-repo setting, add under a repo entry
+# auto_merge:
+#   enabled: false
+#   strategy: squash    # merge | squash | rebase
+#   delete_branch: true
+#   require_label: ""   # optional: only auto-merge if PR has this label
 `
 	f, appendErr := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0o600)
 	if appendErr == nil {
