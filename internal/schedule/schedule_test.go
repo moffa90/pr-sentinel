@@ -143,6 +143,17 @@ func TestIsActive(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "invalid timezone fails open",
+			cfg: Config{
+				Days:      []string{"mon"},
+				StartTime: "08:00",
+				EndTime:   "17:00",
+				Timezone:  "Not/A/Place",
+			},
+			t:    time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC),
+			want: true,
+		},
+		{
 			name: "overnight — window after midnight, yesterday was weekend (not allowed)",
 			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "22:00", EndTime: "06:00"},
 			// Sunday 01:00 — yesterday was Saturday, not in days list

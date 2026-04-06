@@ -29,8 +29,11 @@ func (c Config) IsActive(t time.Time) bool {
 
 	loc, err := c.location()
 	if err != nil {
-		// Invalid timezone — treat as inactive to be safe.
-		return false
+		// Invalid timezone — fail open. Validate() catches bad timezones at
+		// config load time, so this path should not be hit in practice. At
+		// runtime, failing open is safer (runs an extra poll cycle) vs failing
+		// closed (silently stops the daemon).
+		return true
 	}
 
 	now := t.In(loc)
