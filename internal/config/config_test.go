@@ -247,3 +247,27 @@ func TestSaveAndLoad_MaxParallelReviews(t *testing.T) {
 		t.Errorf("MaxParallelReviews = %d, want 5", loaded.MaxParallelReviews)
 	}
 }
+
+func TestValidate_Schedule(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.GitHubUser = "testuser"
+	cfg.Repos = []RepoConfig{
+		{Name: "owner/repo", Path: "/tmp", Mode: ModeDryRun},
+	}
+
+	// Valid schedule
+	cfg.Schedule.Days = []string{"mon", "tue", "wed", "thu", "fri"}
+	cfg.Schedule.StartTime = "08:00"
+	cfg.Schedule.EndTime = "17:00"
+	cfg.Schedule.Timezone = "America/New_York"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid schedule should pass: %v", err)
+	}
+
+	// Invalid day
+	cfg.Schedule.Days = []string{"monday"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("invalid day should fail validation")
+	}
+}

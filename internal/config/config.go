@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/moffa90/pr-sentinel/internal/schedule"
 )
 
 // Mode constants
@@ -38,6 +40,7 @@ type Config struct {
 	Review             ReviewConfig        `yaml:"review"`
 	Notifications      NotificationConfig  `yaml:"notifications"`
 	Repos              []RepoConfig        `yaml:"repos"`
+	Schedule           schedule.Config     `yaml:"schedule"`
 }
 
 // ReviewConfig holds review behaviour settings.
@@ -197,6 +200,9 @@ func (c *Config) Validate() error {
 		if r.Mode != "" && r.Mode != ModeDryRun && r.Mode != ModeLive {
 			return fmt.Errorf("repos[%d].mode must be %q or %q, got %q", i, ModeDryRun, ModeLive, r.Mode)
 		}
+	}
+	if err := c.Schedule.Validate(); err != nil {
+		return err
 	}
 	return nil
 }
