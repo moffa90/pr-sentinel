@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -335,6 +336,42 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 			findingsSummary = o.result.Review.FindingsSummary()
 		}
 
+		// Auto-merge logic
+		autoMergeStatus := ""
+		if o.work.repo.AutoMerge.Enabled && verdict == "approve" {
+			// Check for HIGH/MEDIUM findings
+			hasBlockingFindings := false
+			if o.result.Review != nil {
+				for _, f := range o.result.Review.Findings {
+					if f.Severity == "HIGH" || f.Severity == "MEDIUM" {
+						hasBlockingFindings = true
+						break
+					}
+				}
+			}
+
+			if hasBlockingFindings {
+				autoMergeStatus = "Skipped (has HIGH/MEDIUM findings)"
+				slog.Info("auto-merge skipped due to findings", "repo", o.work.repo.Name, "pr", o.work.pr.Number)
+			} else if o.work.repo.AutoMerge.RequireLabel != "" && !hasLabel(o.work.pr.Labels, o.work.repo.AutoMerge.RequireLabel) {
+				autoMergeStatus = fmt.Sprintf("Skipped (missing label %q)", o.work.repo.AutoMerge.RequireLabel)
+				slog.Info("auto-merge skipped due to missing label", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "required_label", o.work.repo.AutoMerge.RequireLabel)
+			} else if mode == config.ModeLive {
+				strategy := o.work.repo.AutoMerge.Strategy
+				if err := github.EnableAutoMerge(o.work.repo.Name, o.work.pr.Number, strategy, o.work.repo.AutoMerge.DeleteBranch); err != nil {
+					autoMergeStatus = fmt.Sprintf("Failed: %s", err)
+					slog.Warn("auto-merge failed", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
+				} else {
+					autoMergeStatus = fmt.Sprintf("Enabled (%s)", strategy)
+					slog.Info("auto-merge enabled", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "strategy", strategy)
+				}
+			} else {
+				// dry-run mode
+				autoMergeStatus = fmt.Sprintf("Would merge (%s)", o.work.repo.AutoMerge.Strategy)
+				slog.Info("auto-merge dry-run", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "strategy", o.work.repo.AutoMerge.Strategy)
+			}
+		}
+
 		if err := store.RecordReview(state.ReviewRecord{
 			Repo:            o.work.repo.Name,
 			PRNumber:        o.work.pr.Number,
@@ -358,6 +395,7 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 			o.work.repo.Name, o.work.pr.Number, o.work.pr.Title, o.work.pr.Author, o.work.pr.URL,
 			mode, posted, findingsSummary, reviewPath, verdict, summary,
 		)
+		evt.AutoMerge = autoMergeStatus
 
 		// Send to per-repo Teams webhook if configured
 		if o.work.repo.TeamsWebhook != "" {
@@ -428,6 +466,16 @@ func detectClosedPRs(store *state.Store, repo string, openPRs []github.PullReque
 			}
 		}
 	}
+}
+
+// hasLabel checks if the given label exists in the labels list.
+func hasLabel(labels []string, target string) bool {
+	for _, l := range labels {
+		if strings.EqualFold(l, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // RunDaemon starts the poll loop. It runs a cycle immediately, then on every
