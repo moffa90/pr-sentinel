@@ -119,6 +119,11 @@ func runReview(cmd *cobra.Command, args []string) error {
 	// Build final body with disclosure
 	body := publisher.BuildReviewBody(result.Output, cfg.Review.AIDisclosure, cfg.Review.DisclosureText, "")
 
+	verdict := ""
+	if result.Review != nil {
+		verdict = string(result.Review.Verdict)
+	}
+
 	// Handle mode
 	if mode == config.ModeLive {
 		if !confirmPost() {
@@ -127,7 +132,7 @@ func runReview(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("%s Posting review to GitHub...\n", ui.IconDot)
-		if err := publisher.PostLiveReview(repo, prNumber, body); err != nil {
+		if err := publisher.PostLiveReview(repo, prNumber, body, verdict); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		fmt.Printf("  %s Review posted to %s\n", ui.IconCheck, ui.PRReference(repo, prNumber))

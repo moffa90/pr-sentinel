@@ -290,13 +290,20 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 			continue
 		}
 
+		verdict := ""
+		summary := ""
+		if o.result.Review != nil {
+			verdict = string(o.result.Review.Verdict)
+			summary = o.result.Review.Summary
+		}
+
 		posted := false
 		reviewPath := ""
 		mode := o.work.repo.Mode
 
 		if mode == config.ModeLive {
 			if err := retry.Do(3, 2*time.Second, "post review", func() error {
-				return publisher.PostLiveReview(o.work.repo.Name, o.work.pr.Number, o.body)
+				return publisher.PostLiveReview(o.work.repo.Name, o.work.pr.Number, o.body, verdict)
 			}); err != nil {
 				slog.Error("failed to post review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
 				result.Errors++
@@ -349,7 +356,7 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 
 		evt := notifier.NewEvent(
 			o.work.repo.Name, o.work.pr.Number, o.work.pr.Title, o.work.pr.Author, o.work.pr.URL,
-			mode, posted, findingsSummary, reviewPath,
+			mode, posted, findingsSummary, reviewPath, verdict, summary,
 		)
 
 		// Send to per-repo Teams webhook if configured
