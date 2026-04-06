@@ -68,6 +68,23 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Schedule status
+	if !cfg.Schedule.IsEmpty() {
+		now := time.Now()
+		if cfg.Schedule.IsActive(now) {
+			fmt.Printf("%s Schedule: %s\n", ui.IconCheck, ui.SuccessStyle.Render("active"))
+		} else {
+			next := cfg.Schedule.NextWindowOpen(now)
+			if !next.IsZero() {
+				fmt.Printf("%s Schedule: %s (opens %s)\n", ui.IconDot,
+					ui.MutedStyle.Render("paused"),
+					ui.BrandStyle.Render(next.Format("Mon 15:04 MST")))
+			} else {
+				fmt.Printf("%s Schedule: %s\n", ui.IconDot, ui.MutedStyle.Render("paused"))
+			}
+		}
+	}
+
 	fmt.Println()
 
 	// Repo table
