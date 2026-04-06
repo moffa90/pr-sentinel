@@ -118,6 +118,21 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
+	// Append commented-out schedule example
+	scheduleComment := `
+# Schedule: restrict when the daemon polls (omit for 24/7)
+# schedule:
+#   days: [mon, tue, wed, thu, fri]
+#   start_time: "08:00"
+#   end_time: "17:00"
+#   timezone: "America/New_York"
+`
+	f, appendErr := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if appendErr == nil {
+		f.WriteString(scheduleComment)
+		f.Close()
+	}
+
 	fmt.Printf("%s Config saved to %s\n", ui.IconCheck, ui.MutedStyle.Render(cfgPath))
 	fmt.Printf("%s All repos start in %s mode — use %s to enable posting\n",
 		ui.IconDot,
