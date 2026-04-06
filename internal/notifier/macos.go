@@ -29,7 +29,7 @@ func (m *MacOSNotifier) Notify(e Event) error {
 	subtitle := fmt.Sprintf("%s#%d", e.Repo, e.PRNumber)
 
 	script := fmt.Sprintf(
-		`display notification %s with title "pr-sentinel" subtitle %s`,
+		`display notification %s with title "pr-sentinel" subtitle %s sound name "Glass"`,
 		escapeAppleScript(body),
 		escapeAppleScript(subtitle),
 	)
