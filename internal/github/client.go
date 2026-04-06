@@ -36,6 +36,11 @@ type graphQLPullRequest struct {
 	ChangedFiles int       `json:"changedFiles"`
 	Additions    int       `json:"additions"`
 	Deletions    int       `json:"deletions"`
+	Labels       struct {
+		Nodes []struct {
+			Name string `json:"name"`
+		} `json:"nodes"`
+	} `json:"labels"`
 	Author       struct {
 		Login string `json:"login"`
 	} `json:"author"`
@@ -78,6 +83,11 @@ const prQuery = `query($owner: String!, $name: String!) {
         changedFiles
         additions
         deletions
+        labels(first: 20) {
+          nodes {
+            name
+          }
+        }
         author { login }
         reviews(first: 50) {
           nodes {
@@ -180,6 +190,9 @@ func parseGraphQLResponse(data []byte, repo string, githubUser string) ([]PullRe
 			Files:     node.ChangedFiles,
 			Additions: node.Additions,
 			Deletions: node.Deletions,
+		}
+		for _, l := range node.Labels.Nodes {
+			pr.Labels = append(pr.Labels, l.Name)
 		}
 
 		// Find the latest time the user reviewed or commented

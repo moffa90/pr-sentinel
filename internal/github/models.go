@@ -14,6 +14,7 @@ type PullRequest struct {
 	Files     int
 	Additions int
 	Deletions int
+	Labels    []string
 }
 
 // FollowUpCandidate is a PR that was previously reviewed/commented on by the user
