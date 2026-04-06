@@ -30,6 +30,7 @@ func runNotifyTest(cmd *cobra.Command, args []string) error {
 	evt := notifier.NewEvent(
 		"pr-sentinel/test", 0, "Test notification", "pr-sentinel", "",
 		"test", false, "This is a test notification from pr-sentinel", "",
+		"comment", "This is a test review summary",
 	)
 
 	if repoFlag != "" {

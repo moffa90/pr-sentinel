@@ -16,12 +16,16 @@ func NewMacOSNotifier() *MacOSNotifier {
 
 // Notify displays a macOS notification using osascript.
 func (m *MacOSNotifier) Notify(e Event) error {
-	status := "posted"
-	if !e.Posted {
-		status = "dry-run"
+	verdict := e.Verdict
+	if verdict == "" {
+		if e.Posted {
+			verdict = "posted"
+		} else {
+			verdict = "dry-run"
+		}
 	}
 
-	body := fmt.Sprintf("[%s] %s by %s (%s)", e.Mode, e.PRTitle, e.PRAuthor, status)
+	body := fmt.Sprintf("[%s] %s by %s", verdict, e.PRTitle, e.PRAuthor)
 	subtitle := fmt.Sprintf("%s#%d", e.Repo, e.PRNumber)
 
 	script := fmt.Sprintf(

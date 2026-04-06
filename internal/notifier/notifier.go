@@ -16,11 +16,14 @@ type Event struct {
 	Posted          bool   `json:"posted"`
 	FindingsSummary string `json:"findings_summary"`
 	ReviewPath      string `json:"review_path,omitempty"`
+	Verdict         string `json:"verdict,omitempty"`
+	Summary         string `json:"summary,omitempty"`
+	AutoMerge       string `json:"auto_merge,omitempty"`
 	Timestamp       string `json:"timestamp"`
 }
 
 // NewEvent creates an Event with the current timestamp.
-func NewEvent(repo string, prNumber int64, prTitle, prAuthor, prURL, mode string, posted bool, findingsSummary, reviewPath string) Event {
+func NewEvent(repo string, prNumber int64, prTitle, prAuthor, prURL, mode string, posted bool, findingsSummary, reviewPath, verdict, summary string) Event {
 	return Event{
 		Repo:            repo,
 		PRNumber:        prNumber,
@@ -31,6 +34,8 @@ func NewEvent(repo string, prNumber int64, prTitle, prAuthor, prURL, mode string
 		Posted:          posted,
 		FindingsSummary: findingsSummary,
 		ReviewPath:      reviewPath,
+		Verdict:         verdict,
+		Summary:         summary,
 		Timestamp:       time.Now().UTC().Format(time.RFC3339),
 	}
 }

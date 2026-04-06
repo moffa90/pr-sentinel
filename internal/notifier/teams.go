@@ -20,18 +20,7 @@ func (t *TeamsNotifier) Notify(e Event) error {
 
 // buildTeamsPayload formats the event into a Teams Adaptive Card message.
 func buildTeamsPayload(e Event) map[string]interface{} {
-	statusText := "Posted"
-	if !e.Posted {
-		statusText = "Dry Run"
-	}
-
-	modeEmoji := "🟢"
-	if e.Mode == "dry-run" {
-		modeEmoji = "🔵"
-	} else if e.Mode == "test" {
-		modeEmoji = "🧪"
-		statusText = "Test"
-	}
+	statusText, modeEmoji := verdictDisplay(e)
 
 	title := fmt.Sprintf("%s #%d", e.Repo, e.PRNumber)
 	if e.PRNumber == 0 {
@@ -39,7 +28,6 @@ func buildTeamsPayload(e Event) map[string]interface{} {
 	}
 
 	body := []interface{}{
-		// Header with icon and title
 		map[string]interface{}{
 			"type": "ColumnSet",
 			"columns": []interface{}{
@@ -67,11 +55,11 @@ func buildTeamsPayload(e Event) map[string]interface{} {
 							"weight": "Bolder",
 						},
 						map[string]interface{}{
-							"type":    "TextBlock",
-							"text":    title,
-							"spacing": "None",
+							"type":     "TextBlock",
+							"text":     title,
+							"spacing":  "None",
 							"isSubtle": true,
-							"size":    "Small",
+							"size":     "Small",
 						},
 					},
 				},
@@ -90,7 +78,6 @@ func buildTeamsPayload(e Event) map[string]interface{} {
 				},
 			},
 		},
-		// PR title
 		map[string]interface{}{
 			"type":    "TextBlock",
 			"text":    e.PRTitle,
@@ -98,21 +85,40 @@ func buildTeamsPayload(e Event) map[string]interface{} {
 			"wrap":    true,
 			"spacing": "Medium",
 		},
-		// Facts
+	}
+
+	if e.Summary != "" {
+		body = append(body, map[string]interface{}{
+			"type":     "TextBlock",
+			"text":     e.Summary,
+			"wrap":     true,
+			"isSubtle": true,
+			"spacing":  "Small",
+		})
+	}
+
+	facts := []interface{}{
 		map[string]interface{}{
-			"type": "FactSet",
-			"facts": []interface{}{
-				map[string]interface{}{
-					"title": "Author",
-					"value": fmt.Sprintf("@%s", e.PRAuthor),
-				},
-				map[string]interface{}{
-					"title": "Changes",
-					"value": e.FindingsSummary,
-				},
-			},
+			"title": "Author",
+			"value": fmt.Sprintf("@%s", e.PRAuthor),
+		},
+		map[string]interface{}{
+			"title": "Changes",
+			"value": e.FindingsSummary,
 		},
 	}
+
+	if e.AutoMerge != "" {
+		facts = append(facts, map[string]interface{}{
+			"title": "Auto-merge",
+			"value": e.AutoMerge,
+		})
+	}
+
+	body = append(body, map[string]interface{}{
+		"type":  "FactSet",
+		"facts": facts,
+	})
 
 	actions := []interface{}{}
 	if e.PRURL != "" {
@@ -139,5 +145,30 @@ func buildTeamsPayload(e Event) map[string]interface{} {
 				"content":     card,
 			},
 		},
+	}
+}
+
+func verdictDisplay(e Event) (string, string) {
+	if e.Mode == "test" {
+		return "Test", "🧪"
+	}
+
+	suffix := ""
+	if e.Mode == "dry-run" && !e.Posted {
+		suffix = " (Dry Run)"
+	}
+
+	switch e.Verdict {
+	case "approve":
+		return "Approved" + suffix, "✅"
+	case "comment":
+		return "Comment" + suffix, "💬"
+	case "request-changes":
+		return "Changes Requested" + suffix, "❌"
+	default:
+		if e.Posted {
+			return "Posted" + suffix, "🟢"
+		}
+		return "Reviewed" + suffix, "📋"
 	}
 }
