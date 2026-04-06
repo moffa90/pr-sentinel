@@ -207,6 +207,28 @@ func TestNextWindowOpen(t *testing.T) {
 			t:        mustTime("2024-01-15 10:00", "UTC"),
 			wantTime: mustTime("2024-01-22 09:00", "UTC"),
 		},
+		{
+			name: "overnight — before window opens today",
+			cfg: Config{
+				Days:      []string{"mon", "tue", "wed", "thu", "fri"},
+				StartTime: "22:00",
+				EndTime:   "06:00",
+				Timezone:  "UTC",
+			},
+			t:        time.Date(2026, 4, 6, 20, 0, 0, 0, time.UTC), // Monday 8pm
+			wantTime: time.Date(2026, 4, 6, 22, 0, 0, 0, time.UTC), // Monday 10pm same day
+		},
+		{
+			name: "overnight — after window already opened",
+			cfg: Config{
+				Days:      []string{"mon", "tue", "wed", "thu", "fri"},
+				StartTime: "22:00",
+				EndTime:   "06:00",
+				Timezone:  "UTC",
+			},
+			t:        time.Date(2026, 4, 6, 23, 30, 0, 0, time.UTC), // Monday 11:30pm
+			wantTime: time.Date(2026, 4, 7, 22, 0, 0, 0, time.UTC),  // Tuesday 10pm next day
+		},
 	}
 
 	for _, tc := range cases {
@@ -277,6 +299,14 @@ func TestValidate(t *testing.T) {
 		{
 			name:    "days empty but times set",
 			cfg:     Config{Days: []string{}, StartTime: "09:00", EndTime: "17:00"},
+			wantErr: true,
+		},
+		{
+			name: "start_time without end_time",
+			cfg: Config{
+				Days:      []string{"mon"},
+				StartTime: "08:00",
+			},
 			wantErr: true,
 		},
 		{

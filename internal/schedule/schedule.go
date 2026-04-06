@@ -142,6 +142,10 @@ func (c Config) Validate() error {
 		return nil
 	}
 
+	if (c.StartTime == "") != (c.EndTime == "") {
+		return fmt.Errorf("schedule: start_time and end_time must both be set or both be empty")
+	}
+
 	if c.StartTime == "" && c.EndTime == "" && len(c.Days) > 0 {
 		// Days-only schedule without times is acceptable only if both times are
 		// unset. But the spec says "days not empty when times are set", which
