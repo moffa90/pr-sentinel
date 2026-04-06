@@ -18,7 +18,7 @@ type mockFetcher struct {
 	err       error
 }
 
-func (m mockFetcher) FetchOpenPRs(repo string, _ string) ([]github.PullRequest, []github.FollowUpCandidate, error) {
+func (m mockFetcher) FetchOpenPRs(repo string, _ string, _ bool) ([]github.PullRequest, []github.FollowUpCandidate, error) {
 	if m.err != nil {
 		return nil, nil, m.err
 	}

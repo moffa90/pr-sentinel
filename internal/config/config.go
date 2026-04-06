@@ -90,6 +90,7 @@ type RepoConfig struct {
 	Name               string          `yaml:"name"`
 	Path               string          `yaml:"path"`
 	Mode               string          `yaml:"mode"`
+	ReviewOwnPRs       bool            `yaml:"review_own_prs"`
 	ReviewInstructions string          `yaml:"review_instructions"`
 	TeamsWebhook       string          `yaml:"teams_webhook"`
 	AutoMerge          AutoMergeConfig `yaml:"auto_merge"`

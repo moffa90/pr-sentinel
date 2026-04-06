@@ -110,7 +110,7 @@ const testGraphQLResponse = `{
 }`
 
 func TestParseGraphQLResponse(t *testing.T) {
-	prs, followUps, err := parseGraphQLResponse([]byte(testGraphQLResponse), "owner/repo", "myuser")
+	prs, followUps, err := parseGraphQLResponse([]byte(testGraphQLResponse), "owner/repo", "myuser", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +232,7 @@ const testFollowUpResponse = `{
 }`
 
 func TestParseGraphQLResponse_FollowUp(t *testing.T) {
-	prs, followUps, err := parseGraphQLResponse([]byte(testFollowUpResponse), "owner/repo", "myuser")
+	prs, followUps, err := parseGraphQLResponse([]byte(testFollowUpResponse), "owner/repo", "myuser", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestParseGraphQLResponse_FollowUp(t *testing.T) {
 }
 
 func TestParseGraphQLResponse_InvalidJSON(t *testing.T) {
-	_, _, err := parseGraphQLResponse([]byte("not json"), "owner/repo", "myuser")
+	_, _, err := parseGraphQLResponse([]byte("not json"), "owner/repo", "myuser", false)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -303,7 +303,7 @@ const testRateLimitResponse = `{
 }`
 
 func TestParseGraphQLResponse_WithRateLimit(t *testing.T) {
-	prs, _, err := parseGraphQLResponse([]byte(testRateLimitResponse), "owner/repo", "myuser")
+	prs, _, err := parseGraphQLResponse([]byte(testRateLimitResponse), "owner/repo", "myuser", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -327,7 +327,7 @@ const testRateLimitLowResponse = `{
 
 func TestParseGraphQLResponse_LowRateLimit(t *testing.T) {
 	// Should not error — just logs a warning internally
-	prs, followUps, err := parseGraphQLResponse([]byte(testRateLimitLowResponse), "owner/repo", "myuser")
+	prs, followUps, err := parseGraphQLResponse([]byte(testRateLimitLowResponse), "owner/repo", "myuser", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -349,7 +349,7 @@ const testNoRateLimitResponse = `{
 
 func TestParseGraphQLResponse_MissingRateLimit(t *testing.T) {
 	// Fine-grained PATs may return limit=0 or omit rateLimit entirely
-	_, _, err := parseGraphQLResponse([]byte(testNoRateLimitResponse), "owner/repo", "myuser")
+	_, _, err := parseGraphQLResponse([]byte(testNoRateLimitResponse), "owner/repo", "myuser", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

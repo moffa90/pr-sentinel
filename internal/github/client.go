@@ -122,7 +122,7 @@ const prQuery = `query($owner: String!, $name: String!) {
 // FetchOpenPRs runs `gh api graphql` to fetch open PRs for the given repo.
 // Returns two lists: new PRs (never reviewed by githubUser) and follow-up
 // candidates (previously reviewed/commented by githubUser with new commits since).
-func FetchOpenPRs(repo string, githubUser string) ([]PullRequest, []FollowUpCandidate, error) {
+func FetchOpenPRs(repo string, githubUser string, reviewOwnPRs bool) ([]PullRequest, []FollowUpCandidate, error) {
 	owner, name := splitRepo(repo)
 	if owner == "" || name == "" {
 		return nil, nil, fmt.Errorf("invalid repo format %q: expected owner/repo", repo)
@@ -146,13 +146,13 @@ func FetchOpenPRs(repo string, githubUser string) ([]PullRequest, []FollowUpCand
 		return nil, nil, fmt.Errorf("gh api graphql failed for %s: %w", repo, err)
 	}
 
-	return parseGraphQLResponse(out, repo, githubUser)
+	return parseGraphQLResponse(out, repo, githubUser, reviewOwnPRs)
 }
 
 // parseGraphQLResponse parses the JSON output from `gh api graphql` and
 // categorises PRs into new (never reviewed) and follow-up candidates
 // (reviewed/commented by githubUser with new commits since).
-func parseGraphQLResponse(data []byte, repo string, githubUser string) ([]PullRequest, []FollowUpCandidate, error) {
+func parseGraphQLResponse(data []byte, repo string, githubUser string, reviewOwnPRs bool) ([]PullRequest, []FollowUpCandidate, error) {
 	var resp graphQLResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, nil, fmt.Errorf("failed to parse GraphQL response: %w", err)
@@ -175,7 +175,7 @@ func parseGraphQLResponse(data []byte, repo string, githubUser string) ([]PullRe
 		if node.IsDraft {
 			continue
 		}
-		if strings.EqualFold(node.Author.Login, githubUser) {
+		if !reviewOwnPRs && strings.EqualFold(node.Author.Login, githubUser) {
 			continue
 		}
 

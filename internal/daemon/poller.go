@@ -68,14 +68,14 @@ func shouldSkip(opts PollOptions, cycleCount int, dailyCount int) bool {
 // PRFetcher abstracts fetching open PRs for a repo. Enables testing
 // without hitting the real GitHub API.
 type PRFetcher interface {
-	FetchOpenPRs(repo string, githubUser string) ([]github.PullRequest, []github.FollowUpCandidate, error)
+	FetchOpenPRs(repo string, githubUser string, reviewOwnPRs bool) ([]github.PullRequest, []github.FollowUpCandidate, error)
 }
 
 // GitHubPRFetcher is the production implementation that calls the gh CLI.
 type GitHubPRFetcher struct{}
 
-func (g GitHubPRFetcher) FetchOpenPRs(repo string, githubUser string) ([]github.PullRequest, []github.FollowUpCandidate, error) {
-	return github.FetchOpenPRs(repo, githubUser)
+func (g GitHubPRFetcher) FetchOpenPRs(repo string, githubUser string, reviewOwnPRs bool) ([]github.PullRequest, []github.FollowUpCandidate, error) {
+	return github.FetchOpenPRs(repo, githubUser, reviewOwnPRs)
 }
 
 // reviewWork represents a single PR review to be executed.
@@ -120,7 +120,7 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 
 		slog.Info("polling repo", "repo", repo.Name, "mode", repo.Mode)
 
-		prs, followUpCandidates, err := fetcher.FetchOpenPRs(repo.Name, opts.GitHubUser)
+		prs, followUpCandidates, err := fetcher.FetchOpenPRs(repo.Name, opts.GitHubUser, repo.ReviewOwnPRs)
 		if err != nil {
 			slog.Error("failed to fetch PRs", "repo", repo.Name, "error", err)
 			result.Errors++
