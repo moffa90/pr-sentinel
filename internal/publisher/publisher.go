@@ -39,8 +39,8 @@ func BuildReviewBody(reviewOutput string, aiDisclosure bool, disclosureText stri
 }
 
 // PostLiveReview posts a review comment on a pull request via the GitHub CLI.
-func PostLiveReview(repo string, prNumber int64, body string) error {
-	return github.PostReview(repo, prNumber, body)
+func PostLiveReview(repo string, prNumber int64, body string, verdict string) error {
+	return github.PostReview(repo, prNumber, body, verdict)
 }
 
 // SaveDryRunReview writes the review to a markdown file in the given directory

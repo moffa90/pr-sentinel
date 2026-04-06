@@ -253,12 +253,22 @@ func GetPRDiff(repo string, number int64) (string, error) {
 	return string(out), nil
 }
 
-// PostReview posts a review comment on a PR by running `gh pr review`.
-func PostReview(repo string, number int64, body string) error {
+// PostReview posts a review on a PR by running `gh pr review`.
+// Verdict maps to: "approve" → --approve, "request-changes" → --request-changes,
+// anything else → --comment.
+func PostReview(repo string, number int64, body string, verdict string) error {
+	flag := "--comment"
+	switch verdict {
+	case "approve":
+		flag = "--approve"
+	case "request-changes":
+		flag = "--request-changes"
+	}
+
 	cmd := exec.Command("gh", "pr", "review",
 		fmt.Sprintf("%d", number),
 		"-R", repo,
-		"--comment",
+		flag,
 		"--body", body,
 	)
 
