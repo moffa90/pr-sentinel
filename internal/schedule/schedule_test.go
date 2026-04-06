@@ -54,61 +54,61 @@ func TestIsActive(t *testing.T) {
 		},
 		{
 			name: "weekday within window",
-			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "09:00", EndTime: "17:00"},
+			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC"},
 			t:    mustTime("2024-01-15 10:00", "UTC"), // Monday 10:00
 			want: true,
 		},
 		{
 			name: "weekday too early",
-			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "09:00", EndTime: "17:00"},
+			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC"},
 			t:    mustTime("2024-01-15 08:59", "UTC"), // Monday 08:59
 			want: false,
 		},
 		{
 			name: "weekday too late",
-			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "09:00", EndTime: "17:00"},
+			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC"},
 			t:    mustTime("2024-01-15 17:00", "UTC"), // Monday 17:00 — end is exclusive
 			want: false,
 		},
 		{
 			name: "weekend excluded",
-			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "09:00", EndTime: "17:00"},
+			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC"},
 			t:    mustTime("2024-01-13 10:00", "UTC"), // Saturday
 			want: false,
 		},
 		{
 			name: "overnight window before midnight (active)",
-			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "22:00", EndTime: "06:00"},
+			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "22:00", EndTime: "06:00", Timezone: "UTC"},
 			t:    mustTime("2024-01-15 23:00", "UTC"), // Monday 23:00
 			want: true,
 		},
 		{
 			name: "overnight window after midnight (active — yesterday was allowed)",
-			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "22:00", EndTime: "06:00"},
+			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "22:00", EndTime: "06:00", Timezone: "UTC"},
 			t:    mustTime("2024-01-16 02:00", "UTC"), // Tuesday 02:00 — window opened Monday
 			want: true,
 		},
 		{
 			name: "overnight window outside gap (between end and start)",
-			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "22:00", EndTime: "06:00"},
+			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "22:00", EndTime: "06:00", Timezone: "UTC"},
 			t:    mustTime("2024-01-15 12:00", "UTC"), // Monday 12:00 — gap
 			want: false,
 		},
 		{
 			name: "exact start time is active",
-			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00"},
+			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC"},
 			t:    mustTime("2024-01-15 09:00", "UTC"),
 			want: true,
 		},
 		{
 			name: "exact end time is not active",
-			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00"},
+			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC"},
 			t:    mustTime("2024-01-15 17:00", "UTC"),
 			want: false,
 		},
 		{
 			name: "all days active",
-			cfg:  Config{Days: []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}, StartTime: "00:00", EndTime: "23:59"},
+			cfg:  Config{Days: []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}, StartTime: "00:00", EndTime: "23:59", Timezone: "UTC"},
 			t:    mustTime("2024-01-13 12:00", "UTC"), // Saturday
 			want: true,
 		},
@@ -137,9 +137,9 @@ func TestIsActive(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "default timezone (empty = UTC)",
-			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00"},
-			t:    mustTime("2024-01-15 09:30", "UTC"),
+			name: "default timezone (empty = system local)",
+			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"}, StartTime: "00:00", EndTime: "23:59"},
+			t:    time.Now(),
 			want: true,
 		},
 		{
@@ -155,7 +155,7 @@ func TestIsActive(t *testing.T) {
 		},
 		{
 			name: "overnight — window after midnight, yesterday was weekend (not allowed)",
-			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "22:00", EndTime: "06:00"},
+			cfg:  Config{Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartTime: "22:00", EndTime: "06:00", Timezone: "UTC"},
 			// Sunday 01:00 — yesterday was Saturday, not in days list
 			t:    mustTime("2024-01-14 01:00", "UTC"),
 			want: false,
@@ -188,21 +188,21 @@ func TestNextWindowOpen(t *testing.T) {
 		},
 		{
 			name: "next open is today",
-			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00"},
+			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC"},
 			// Monday 08:00 — window opens at 09:00 same day
 			t:        mustTime("2024-01-15 08:00", "UTC"),
 			wantTime: mustTime("2024-01-15 09:00", "UTC"),
 		},
 		{
 			name: "window already passed today — next is same day next week",
-			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00"},
+			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC"},
 			// Monday 18:00 — window closed, next is Monday next week
 			t:        mustTime("2024-01-15 18:00", "UTC"),
 			wantTime: mustTime("2024-01-22 09:00", "UTC"),
 		},
 		{
 			name: "currently inside window — next open is next occurrence",
-			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00"},
+			cfg:  Config{Days: []string{"mon"}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC"},
 			// Monday 10:00 — currently active, next open is next Monday
 			t:        mustTime("2024-01-15 10:00", "UTC"),
 			wantTime: mustTime("2024-01-22 09:00", "UTC"),

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
+	ghclient "github.com/moffa90/pr-sentinel/internal/github"
 	"github.com/moffa90/pr-sentinel/internal/publisher"
 	"github.com/moffa90/pr-sentinel/internal/reviewer"
 	"github.com/moffa90/pr-sentinel/internal/ui"
@@ -131,8 +132,18 @@ func runReview(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
+		// GitHub rejects --approve/--request-changes on your own PRs.
+		// Detect author via gh pr view and fall back to --comment.
+		postVerdict := verdict
+		if repoConf.ReviewOwnPRs && cfg.GitHubUser != "" {
+			prState, viewErr := ghclient.GetPRAuthor(repo, prNumber)
+			if viewErr == nil && strings.EqualFold(prState, cfg.GitHubUser) {
+				postVerdict = "comment"
+			}
+		}
+
 		fmt.Printf("%s Posting review to GitHub...\n", ui.IconDot)
-		if err := publisher.PostLiveReview(repo, prNumber, body, verdict); err != nil {
+		if err := publisher.PostLiveReview(repo, prNumber, body, postVerdict); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		fmt.Printf("  %s Review posted to %s\n", ui.IconCheck, ui.PRReference(repo, prNumber))

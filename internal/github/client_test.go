@@ -355,6 +355,92 @@ func TestParseGraphQLResponse_MissingRateLimit(t *testing.T) {
 	}
 }
 
+const testLabelsResponse = `{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "nodes": [
+          {
+            "number": 60,
+            "title": "feat: labeled PR",
+            "url": "https://github.com/owner/repo/pull/60",
+            "isDraft": false,
+            "createdAt": "2026-03-15T10:00:00Z",
+            "changedFiles": 1,
+            "additions": 5,
+            "deletions": 2,
+            "labels": {
+              "nodes": [
+                {"name": "auto-merge"},
+                {"name": "enhancement"}
+              ]
+            },
+            "author": { "login": "alice" },
+            "reviews": { "nodes": [] },
+            "comments": { "nodes": [] },
+            "commits": {
+              "nodes": [
+                { "commit": { "oid": "fff111", "committedDate": "2026-03-15T10:00:00Z" } }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "rateLimit": { "limit": 5000, "remaining": 4990, "cost": 1 }
+  }
+}`
+
+func TestParseGraphQLResponse_Labels(t *testing.T) {
+	prs, _, err := parseGraphQLResponse([]byte(testLabelsResponse), "owner/repo", "myuser", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(prs) != 1 {
+		t.Fatalf("expected 1 PR, got %d", len(prs))
+	}
+
+	if len(prs[0].Labels) != 2 {
+		t.Fatalf("expected 2 labels, got %d", len(prs[0].Labels))
+	}
+	if prs[0].Labels[0] != "auto-merge" {
+		t.Errorf("expected first label 'auto-merge', got %q", prs[0].Labels[0])
+	}
+	if prs[0].Labels[1] != "enhancement" {
+		t.Errorf("expected second label 'enhancement', got %q", prs[0].Labels[1])
+	}
+}
+
+func TestParseGraphQLResponse_ReviewOwnPRs(t *testing.T) {
+	// With reviewOwnPRs=false, PR #45 (authored by myuser) is filtered out
+	prs, _, err := parseGraphQLResponse([]byte(testGraphQLResponse), "owner/repo", "myuser", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, pr := range prs {
+		if pr.Number == 45 {
+			t.Error("PR #45 (own PR) should be filtered out when reviewOwnPRs=false")
+		}
+	}
+
+	// With reviewOwnPRs=true, PR #45 should be included
+	prs2, _, err := parseGraphQLResponse([]byte(testGraphQLResponse), "owner/repo", "myuser", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	found := false
+	for _, pr := range prs2 {
+		if pr.Number == 45 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("PR #45 (own PR) should be included when reviewOwnPRs=true")
+	}
+}
+
 func TestSplitRepo(t *testing.T) {
 	tests := []struct {
 		input     string

@@ -344,7 +344,8 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 
 		// Auto-merge logic
 		autoMergeStatus := ""
-		if o.work.repo.AutoMerge.Enabled && verdict == "approve" {
+		isSelfAuthored := o.work.repo.ReviewOwnPRs && strings.EqualFold(o.work.pr.Author, opts.GitHubUser)
+		if o.work.repo.AutoMerge.Enabled && verdict == "approve" && !isSelfAuthored {
 			// Check for HIGH/MEDIUM findings
 			hasBlockingFindings := false
 			if o.result.Review != nil {
@@ -497,8 +498,8 @@ func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notif
 		if !cfg.Schedule.IsEmpty() {
 			now := time.Now()
 			if !cfg.Schedule.IsActive(now) {
+				next := cfg.Schedule.NextWindowOpen(now)
 				if !wasOutsideSchedule {
-					next := cfg.Schedule.NextWindowOpen(now)
 					if !next.IsZero() {
 						slog.Info("schedule window closed, pausing", "next_open", next.Format("Mon 15:04 MST"))
 					} else {
@@ -510,7 +511,7 @@ func RunDaemon(ctx context.Context, cfg config.Config, store *state.Store, notif
 				}
 
 				nextChange := ""
-				if next := cfg.Schedule.NextWindowOpen(now); !next.IsZero() {
+				if !next.IsZero() {
 					nextChange = next.Format(time.RFC3339)
 				}
 				if err := WriteHealth(HealthStatus{

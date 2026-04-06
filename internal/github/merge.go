@@ -11,6 +11,11 @@ import (
 // GitHub will merge the PR once all required status checks and reviews pass.
 // strategy must be "merge", "squash", or "rebase".
 func EnableAutoMerge(repo string, number int64, strategy string, deleteBranch bool) error {
+	validStrategies := map[string]bool{"merge": true, "squash": true, "rebase": true}
+	if !validStrategies[strategy] {
+		return fmt.Errorf("invalid merge strategy %q: must be merge, squash, or rebase", strategy)
+	}
+
 	args := []string{
 		"pr", "merge",
 		fmt.Sprintf("%d", number),

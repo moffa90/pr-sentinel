@@ -207,10 +207,10 @@ func parseDay(s string) (time.Weekday, error) {
 }
 
 // location returns the time.Location for the config's Timezone. Falls back to
-// UTC when Timezone is empty.
+// system local timezone when Timezone is empty.
 func (c Config) location() (*time.Location, error) {
 	if c.Timezone == "" {
-		return time.UTC, nil
+		return time.Local, nil
 	}
 	return time.LoadLocation(c.Timezone)
 }

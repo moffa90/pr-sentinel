@@ -323,6 +323,30 @@ func GetPRState(repo string, number int64) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// GetPRAuthor returns the login of the PR author.
+func GetPRAuthor(repo string, number int64) (string, error) {
+	cmd := exec.Command("gh", "pr", "view",
+		fmt.Sprintf("%d", number),
+		"-R", repo,
+		"--json", "author",
+		"--jq", ".author.login",
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return "", fmt.Errorf("gh pr view %s#%d failed: %s: %w", repo, number, errMsg, err)
+		}
+		return "", fmt.Errorf("gh pr view %s#%d failed: %w", repo, number, err)
+	}
+
+	return strings.TrimSpace(string(out)), nil
+}
+
 // splitRepo splits a "owner/repo" string into its owner and name components.
 func splitRepo(repo string) (owner string, name string) {
 	parts := strings.SplitN(repo, "/", 2)
