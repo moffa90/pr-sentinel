@@ -2,10 +2,8 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -13,8 +11,6 @@ import (
 	"github.com/moffa90/pr-sentinel/internal/config"
 	"github.com/moffa90/pr-sentinel/internal/github"
 	"github.com/moffa90/pr-sentinel/internal/notifier"
-	"github.com/moffa90/pr-sentinel/internal/publisher"
-	"github.com/moffa90/pr-sentinel/internal/retry"
 	"github.com/moffa90/pr-sentinel/internal/reviewer"
 	"github.com/moffa90/pr-sentinel/internal/state"
 )
@@ -29,6 +25,7 @@ type PollOptions struct {
 	ReviewInstructions string
 	DisclosureText     string
 	AIDisclosure       bool
+	Model              reviewer.ModelOptions
 }
 
 // PollResult summarises the outcome of a single poll cycle.
@@ -51,6 +48,10 @@ func PollOptionsFromConfig(cfg config.Config) PollOptions {
 		ReviewInstructions: cfg.Review.Instructions,
 		DisclosureText:     cfg.Review.DisclosureText,
 		AIDisclosure:       cfg.Review.AIDisclosure,
+		Model: reviewer.ModelOptions{
+			Model:         cfg.Review.Model,
+			FallbackModel: cfg.Review.FallbackModel,
+		},
 	}
 }
 
@@ -90,7 +91,6 @@ type reviewWork struct {
 type reviewOutcome struct {
 	work   reviewWork
 	result reviewer.ReviewResult
-	body   string
 }
 
 // RunPollCycle iterates configured repos, fetches open PRs, runs reviews,
@@ -260,20 +260,16 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 
 			slog.Info("reviewing PR", "repo", w.repo.Name, "pr", w.pr.Number, "title", w.pr.Title)
 			slog.Debug("starting review subprocess", "repo", w.repo.Name, "pr", w.pr.Number, "repoPath", w.repoPath)
-			rr := reviewer.RunReview(ctx, w.repoPath, w.prompt, opts.ReviewInstructions, w.repo.ReviewInstructions, opts.ReviewTimeout)
-			body := ""
-			if rr.Error == nil {
-				if rr.Review != nil {
-					body = publisher.BuildReviewBody(rr.Review.FormatMarkdown(), opts.AIDisclosure, opts.DisclosureText, w.pr.Author)
-					slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second), "verdict", rr.Review.Verdict, "findings", rr.Review.FindingsSummary(), "cost_usd", rr.CostUSD)
-				} else {
-					body = publisher.BuildReviewBody(rr.Output, opts.AIDisclosure, opts.DisclosureText, w.pr.Author)
-					slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second), "cost_usd", rr.CostUSD)
-				}
-			} else {
+			rr := reviewer.RunReviewWithModel(ctx, w.repoPath, w.prompt, opts.ReviewInstructions, w.repo.ReviewInstructions, opts.ReviewTimeout, opts.Model)
+			switch {
+			case rr.Error != nil:
 				slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second))
+			case rr.Review != nil:
+				slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second), "verdict", rr.Review.Verdict, "findings", rr.Review.FindingsSummary(), "cost_usd", rr.CostUSD, "models", strings.Join(rr.Models, ","))
+			default:
+				slog.Info("review complete", "repo", w.repo.Name, "pr", w.pr.Number, "duration", rr.Duration.Round(time.Second), "cost_usd", rr.CostUSD, "models", strings.Join(rr.Models, ","))
 			}
-			outcomes <- reviewOutcome{work: w, result: rr, body: body}
+			outcomes <- reviewOutcome{work: w, result: rr}
 		}(w)
 	}
 
@@ -291,134 +287,17 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 			continue
 		}
 
-		verdict := ""
-		summary := ""
-		if o.result.Review != nil {
-			verdict = string(o.result.Review.Verdict)
-			summary = o.result.Review.Summary
+		po, err := ProcessReview(store, notify, opts, o.work.repo, o.work.pr, o.result)
+		if err != nil {
+			slog.Error("failed to publish review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
+			result.Errors++
+			continue
 		}
-
-		posted := false
-		reviewPath := ""
-		mode := o.work.repo.Mode
-
-		if mode == config.ModeLive {
-			// GitHub doesn't allow approving or requesting changes on your own PR.
-			// Fall back to --comment when reviewing self-authored PRs.
-			postVerdict := verdict
-			if o.work.repo.ReviewOwnPRs && strings.EqualFold(o.work.pr.Author, opts.GitHubUser) {
-				postVerdict = "comment"
-			}
-			if err := retry.Do(3, 2*time.Second, "post review", func() error {
-				return publisher.PostLiveReview(o.work.repo.Name, o.work.pr.Number, o.body, postVerdict)
-			}); err != nil {
-				slog.Error("failed to post review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
-				result.Errors++
-				continue
-			}
-			posted = true
+		if po.Posted {
 			result.Posted++
 		} else {
-			reviewsDir := filepath.Join(config.ConfigDir(), "reviews")
-			savedPath, err := publisher.SaveDryRunReview(publisher.SaveParams{
-				ReviewsDir: reviewsDir,
-				Repo:       o.work.repo.Name,
-				PRNumber:   o.work.pr.Number,
-				PRTitle:    o.work.pr.Title,
-				PRAuthor:   o.work.pr.Author,
-				Body:       o.body,
-			})
-			if err != nil {
-				slog.Error("failed to save dry-run review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
-				result.Errors++
-				continue
-			}
-			reviewPath = savedPath
 			result.DryRun++
 		}
-
-		findingsSummary := fmt.Sprintf("%d files, %d additions, %d deletions", o.work.pr.Files, o.work.pr.Additions, o.work.pr.Deletions)
-		if o.result.Review != nil {
-			findingsSummary = o.result.Review.FindingsSummary()
-		}
-
-		// Auto-merge logic
-		autoMergeStatus := ""
-		isSelfAuthored := o.work.repo.ReviewOwnPRs && strings.EqualFold(o.work.pr.Author, opts.GitHubUser)
-		if o.work.repo.AutoMerge.Enabled && verdict == "approve" && !isSelfAuthored {
-			// Check for HIGH/MEDIUM findings
-			hasBlockingFindings := false
-			if o.result.Review != nil {
-				for _, f := range o.result.Review.Findings {
-					if f.Severity == "HIGH" || f.Severity == "MEDIUM" {
-						hasBlockingFindings = true
-						break
-					}
-				}
-			}
-
-			if hasBlockingFindings {
-				autoMergeStatus = "Skipped (has HIGH/MEDIUM findings)"
-				slog.Info("auto-merge skipped due to findings", "repo", o.work.repo.Name, "pr", o.work.pr.Number)
-			} else if o.work.repo.AutoMerge.RequireLabel != "" && !hasLabel(o.work.pr.Labels, o.work.repo.AutoMerge.RequireLabel) {
-				autoMergeStatus = fmt.Sprintf("Skipped (missing label %q)", o.work.repo.AutoMerge.RequireLabel)
-				slog.Info("auto-merge skipped due to missing label", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "required_label", o.work.repo.AutoMerge.RequireLabel)
-			} else if mode == config.ModeLive {
-				strategy := o.work.repo.AutoMerge.Strategy
-				if err := github.EnableAutoMerge(o.work.repo.Name, o.work.pr.Number, strategy, o.work.repo.AutoMerge.DeleteBranch); err != nil {
-					autoMergeStatus = fmt.Sprintf("Failed: %s", err)
-					slog.Warn("auto-merge failed", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
-				} else {
-					autoMergeStatus = fmt.Sprintf("Enabled (%s)", strategy)
-					slog.Info("auto-merge enabled", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "strategy", strategy)
-				}
-			} else {
-				// dry-run mode
-				autoMergeStatus = fmt.Sprintf("Would merge (%s)", o.work.repo.AutoMerge.Strategy)
-				slog.Info("auto-merge dry-run", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "strategy", o.work.repo.AutoMerge.Strategy)
-			}
-		}
-
-		if err := store.RecordReview(state.ReviewRecord{
-			Repo:            o.work.repo.Name,
-			PRNumber:        o.work.pr.Number,
-			PRTitle:         o.work.pr.Title,
-			PRAuthor:        o.work.pr.Author,
-			ReviewOutput:    o.result.Output,
-			FindingsSummary: findingsSummary,
-			Mode:            mode,
-			Posted:          posted,
-			CostUSD:         o.result.CostUSD,
-			ReviewedAt:      time.Now().UTC(),
-		}); err != nil {
-			slog.Error("failed to record review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
-		}
-
-		if err := store.IncrementDailyCount(today); err != nil {
-			slog.Error("failed to increment daily count", "error", err)
-		}
-
-		evt := notifier.NewEvent(
-			o.work.repo.Name, o.work.pr.Number, o.work.pr.Title, o.work.pr.Author, o.work.pr.URL,
-			mode, posted, findingsSummary, reviewPath, verdict, summary,
-		)
-		evt.AutoMerge = autoMergeStatus
-
-		// Send to per-repo Teams webhook if configured
-		if o.work.repo.TeamsWebhook != "" {
-			repoTeams := notifier.NewTeamsNotifier(o.work.repo.TeamsWebhook)
-			if err := repoTeams.Notify(evt); err != nil {
-				slog.Error("repo teams notification failed", "repo", o.work.repo.Name, "error", err)
-			}
-		}
-
-		// Send to global notifiers
-		if notify != nil {
-			if err := notify.Notify(evt); err != nil {
-				slog.Error("notification failed", "error", err)
-			}
-		}
-
 		result.Reviewed++
 	}
 

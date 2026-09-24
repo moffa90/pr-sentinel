@@ -276,3 +276,83 @@ func TestStructuredReview_FormatMarkdown(t *testing.T) {
 		}
 	}
 }
+
+func argValue(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+func TestBuildClaudeArgsWithModel(t *testing.T) {
+	tests := []struct {
+		name         string
+		m            ModelOptions
+		wantModel    string
+		wantFallback string
+	}{
+		{"none", ModelOptions{}, "", ""},
+		{"model only", ModelOptions{Model: "opus"}, "opus", ""},
+		{"model and fallback", ModelOptions{Model: "opus", FallbackModel: "sonnet"}, "opus", "sonnet"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := BuildClaudeArgsWithModel("p", "", "", tt.m)
+			got, ok := argValue(args, "--model")
+			if ok != (tt.wantModel != "") || got != tt.wantModel {
+				t.Errorf("--model = %q (present=%v), want %q", got, ok, tt.wantModel)
+			}
+			got, ok = argValue(args, "--fallback-model")
+			if ok != (tt.wantFallback != "") || got != tt.wantFallback {
+				t.Errorf("--fallback-model = %q (present=%v), want %q", got, ok, tt.wantFallback)
+			}
+		})
+	}
+
+	// BuildClaudeArgs keeps the CLI default model.
+	if _, ok := argValue(BuildClaudeArgs("p", "", ""), "--model"); ok {
+		t.Error("BuildClaudeArgs should not pass --model")
+	}
+}
+
+func TestModelMatches(t *testing.T) {
+	tests := []struct {
+		requested string
+		used      []string
+		want      bool
+	}{
+		{"opus", []string{"claude-opus-5-5"}, true},
+		{"opus", []string{"claude-haiku-4-5-20251001", "claude-opus-5-5"}, true},
+		{"opus", []string{"claude-sonnet-5"}, false},
+		{"sonnet", []string{"claude-sonnet-5"}, true},
+		{"claude-opus-5-5", []string{"claude-opus-5-5[1m]"}, true},
+		{"claude-opus-5-5", []string{"claude-opus-4-7"}, false},
+		{"OPUS", []string{"claude-opus-5-5"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.requested+"/"+strings.Join(tt.used, ","), func(t *testing.T) {
+			if got := ModelMatches(tt.requested, tt.used); got != tt.want {
+				t.Errorf("ModelMatches(%q, %v) = %v, want %v", tt.requested, tt.used, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCLIOutput_Models(t *testing.T) {
+	data := `{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"verdict":"approve","summary":"ok","findings":[]},"total_cost_usd":0.1,"modelUsage":{"claude-opus-5-5":{"inputTokens":10},"claude-haiku-4-5-20251001":{"inputTokens":1}}}`
+	res, err := ParseCLIOutput(data)
+	if err != nil {
+		t.Fatalf("ParseCLIOutput: %v", err)
+	}
+	want := []string{"claude-haiku-4-5-20251001", "claude-opus-5-5"}
+	if strings.Join(res.Models, ",") != strings.Join(want, ",") {
+		t.Errorf("Models = %v, want %v", res.Models, want)
+	}
+
+	noUsage, _ := ParseCLIOutput(`{"type":"result","structured_output":{"verdict":"approve","summary":"ok","findings":[]}}`)
+	if len(noUsage.Models) != 0 {
+		t.Errorf("Models without modelUsage = %v, want empty", noUsage.Models)
+	}
+}

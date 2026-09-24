@@ -355,3 +355,68 @@ func splitRepo(repo string) (owner string, name string) {
 	}
 	return parts[0], parts[1]
 }
+
+// prViewJSON is the subset of `gh pr view --json` fields used by GetPR.
+type prViewJSON struct {
+	Number       int64  `json:"number"`
+	Title        string `json:"title"`
+	URL          string `json:"url"`
+	IsDraft      bool   `json:"isDraft"`
+	Additions    int    `json:"additions"`
+	Deletions    int    `json:"deletions"`
+	ChangedFiles int    `json:"changedFiles"`
+	Author       struct {
+		Login string `json:"login"`
+	} `json:"author"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+const prViewFields = "number,title,url,isDraft,additions,deletions,changedFiles,author,labels"
+
+// GetPR fetches a single PR's metadata via `gh pr view`.
+func GetPR(repo string, number int64) (PullRequest, error) {
+	cmd := exec.Command("gh", "pr", "view",
+		fmt.Sprintf("%d", number),
+		"-R", repo,
+		"--json", prViewFields,
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return PullRequest{}, fmt.Errorf("gh pr view %s#%d failed: %s: %w", repo, number, errMsg, err)
+		}
+		return PullRequest{}, fmt.Errorf("gh pr view %s#%d failed: %w", repo, number, err)
+	}
+
+	return parsePRView(out, repo)
+}
+
+// parsePRView converts `gh pr view --json` output into a PullRequest.
+func parsePRView(data []byte, repo string) (PullRequest, error) {
+	var v prViewJSON
+	if err := json.Unmarshal(data, &v); err != nil {
+		return PullRequest{}, fmt.Errorf("parsing gh pr view output: %w", err)
+	}
+	pr := PullRequest{
+		Repo:      repo,
+		Number:    v.Number,
+		Title:     v.Title,
+		Author:    v.Author.Login,
+		URL:       v.URL,
+		IsDraft:   v.IsDraft,
+		Files:     v.ChangedFiles,
+		Additions: v.Additions,
+		Deletions: v.Deletions,
+	}
+	for _, l := range v.Labels {
+		pr.Labels = append(pr.Labels, l.Name)
+	}
+	return pr, nil
+}

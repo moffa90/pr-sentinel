@@ -3,6 +3,7 @@ package reviewer
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -32,12 +33,26 @@ type StructuredReview struct {
 
 // claudeEnvelope is the JSON wrapper that claude CLI returns with --output-format json.
 type claudeEnvelope struct {
-	Type             string           `json:"type"`
-	Subtype          string           `json:"subtype"`
-	IsError          bool             `json:"is_error"`
-	Result           string           `json:"result"`
-	StructuredOutput *StructuredReview `json:"structured_output"`
-	CostUSD          float64          `json:"total_cost_usd"`
+	Type             string                     `json:"type"`
+	Subtype          string                     `json:"subtype"`
+	IsError          bool                       `json:"is_error"`
+	Result           string                     `json:"result"`
+	StructuredOutput *StructuredReview          `json:"structured_output"`
+	CostUSD          float64                    `json:"total_cost_usd"`
+	ModelUsage       map[string]json.RawMessage `json:"modelUsage"`
+}
+
+// models returns the sorted model IDs from the envelope's modelUsage.
+func (e claudeEnvelope) models() []string {
+	if len(e.ModelUsage) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(e.ModelUsage))
+	for k := range e.ModelUsage {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ReviewJSON schema passed to claude CLI via --json-schema.
@@ -91,6 +106,7 @@ type ParseResult struct {
 	Review  *StructuredReview
 	Raw     string
 	CostUSD float64
+	Models  []string
 }
 
 func ParseCLIOutput(data string) (ParseResult, error) {
@@ -102,25 +118,25 @@ func ParseCLIOutput(data string) (ParseResult, error) {
 	}
 
 	if env.IsError {
-		return ParseResult{Raw: env.Result, CostUSD: env.CostUSD}, fmt.Errorf("claude returned error (%s): %s", env.Subtype, env.Result)
+		return ParseResult{Raw: env.Result, CostUSD: env.CostUSD, Models: env.models()}, fmt.Errorf("claude returned error (%s): %s", env.Subtype, env.Result)
 	}
 
 	// Prefer structured_output field (populated when --json-schema is used)
 	if env.StructuredOutput != nil {
 		raw, _ := json.Marshal(env.StructuredOutput)
-		return ParseResult{Review: env.StructuredOutput, Raw: string(raw), CostUSD: env.CostUSD}, nil
+		return ParseResult{Review: env.StructuredOutput, Raw: string(raw), CostUSD: env.CostUSD, Models: env.models()}, nil
 	}
 
 	// Fallback: try to parse the result field as JSON
 	if env.Result != "" {
 		var review StructuredReview
 		if err := json.Unmarshal([]byte(env.Result), &review); err != nil {
-			return ParseResult{Raw: env.Result, CostUSD: env.CostUSD}, fmt.Errorf("failed to parse review JSON: %w", err)
+			return ParseResult{Raw: env.Result, CostUSD: env.CostUSD, Models: env.models()}, fmt.Errorf("failed to parse review JSON: %w", err)
 		}
-		return ParseResult{Review: &review, Raw: env.Result, CostUSD: env.CostUSD}, nil
+		return ParseResult{Review: &review, Raw: env.Result, CostUSD: env.CostUSD, Models: env.models()}, nil
 	}
 
-	return ParseResult{CostUSD: env.CostUSD}, fmt.Errorf("claude returned empty result")
+	return ParseResult{CostUSD: env.CostUSD, Models: env.models()}, fmt.Errorf("claude returned empty result")
 }
 
 // FindingsSummary returns a human-readable summary of findings by severity.

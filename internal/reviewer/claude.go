@@ -27,8 +27,16 @@ type ReviewResult struct {
 	Output   string            // raw result text from Claude
 	Review   *StructuredReview // parsed structured review (nil if parsing failed)
 	Duration time.Duration
-	CostUSD  float64 // from Claude CLI envelope
+	CostUSD  float64  // from Claude CLI envelope
+	Models   []string // model IDs reported in the CLI envelope's modelUsage
 	Error    error
+}
+
+// ModelOptions selects the model for a claude CLI invocation. Empty fields
+// leave the CLI default in place.
+type ModelOptions struct {
+	Model         string // alias ("opus", "sonnet", "fable") or full model ID
+	FallbackModel string
 }
 
 // BuildReviewPrompt builds a prompt for Claude to review a pull request.
@@ -97,8 +105,15 @@ func BuildFollowUpPrompt(p FollowUpParams) string {
 	return b.String()
 }
 
-// BuildClaudeArgs returns the argument list for the claude CLI invocation.
+// BuildClaudeArgs returns the argument list for the claude CLI invocation
+// using the CLI's default model.
 func BuildClaudeArgs(prompt string, globalInstructions string, repoInstructions string) []string {
+	return BuildClaudeArgsWithModel(prompt, globalInstructions, repoInstructions, ModelOptions{})
+}
+
+// BuildClaudeArgsWithModel returns the argument list for the claude CLI
+// invocation, adding --model/--fallback-model when set.
+func BuildClaudeArgsWithModel(prompt string, globalInstructions string, repoInstructions string, m ModelOptions) []string {
 	args := []string{
 		"-p", prompt,
 		"--output-format", "json",
@@ -106,6 +121,12 @@ func BuildClaudeArgs(prompt string, globalInstructions string, repoInstructions 
 		"--allowedTools", "Read,Glob,Grep,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)",
 	}
 
+	if m.Model != "" {
+		args = append(args, "--model", m.Model)
+	}
+	if m.FallbackModel != "" {
+		args = append(args, "--fallback-model", m.FallbackModel)
+	}
 	if globalInstructions != "" {
 		args = append(args, "--append-system-prompt", globalInstructions)
 	}
@@ -116,14 +137,22 @@ func BuildClaudeArgs(prompt string, globalInstructions string, repoInstructions 
 	return args
 }
 
-// RunReview executes the claude CLI to review a pull request diff.
+// RunReview executes the claude CLI to review a pull request diff using the
+// CLI's default model.
 func RunReview(ctx context.Context, repoPath string, prompt string, globalInstructions string, repoInstructions string, timeout time.Duration) ReviewResult {
+	return RunReviewWithModel(ctx, repoPath, prompt, globalInstructions, repoInstructions, timeout, ModelOptions{})
+}
+
+// RunReviewWithModel executes the claude CLI to review a pull request diff
+// with the given model selection. Warns when the models reported by the CLI
+// don't match the requested model.
+func RunReviewWithModel(ctx context.Context, repoPath string, prompt string, globalInstructions string, repoInstructions string, timeout time.Duration, m ModelOptions) ReviewResult {
 	start := time.Now()
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	args := BuildClaudeArgs(prompt, globalInstructions, repoInstructions)
+	args := BuildClaudeArgsWithModel(prompt, globalInstructions, repoInstructions, m)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = repoPath
 	slog.Debug("starting claude", "dir", repoPath, "timeout", timeout, "prompt_bytes", len(prompt), "arg_count", len(args))
@@ -200,12 +229,31 @@ func RunReview(ctx context.Context, repoPath string, prompt string, globalInstru
 		slog.Warn("failed to parse structured review, using raw output", "error", parseErr)
 	}
 
+	if m.Model != "" && len(parsed.Models) > 0 && !ModelMatches(m.Model, parsed.Models) {
+		slog.Warn("review ran on unexpected model", "dir", repoPath, "requested", m.Model, "used", strings.Join(parsed.Models, ","))
+	}
+
 	return ReviewResult{
 		Output:   parsed.Raw,
 		Review:   parsed.Review,
 		Duration: duration,
 		CostUSD:  parsed.CostUSD,
+		Models:   parsed.Models,
 	}
+}
+
+// ModelMatches reports whether any used model ID corresponds to the requested
+// model. Aliases match by family ("opus" matches "claude-opus-5-5"); full IDs
+// match by prefix so date-suffixed IDs still match.
+func ModelMatches(requested string, used []string) bool {
+	req := strings.ToLower(requested)
+	for _, u := range used {
+		u = strings.ToLower(u)
+		if strings.HasPrefix(u, req) || strings.Contains(u, "-"+req+"-") || strings.HasSuffix(u, "-"+req) {
+			return true
+		}
+	}
+	return false
 }
 
 // truncate returns the first n bytes of s, appending "..." if truncated.

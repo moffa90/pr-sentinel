@@ -277,3 +277,42 @@ func TestRecentReviews(t *testing.T) {
 		t.Errorf("third record PRNumber = %d, want 3", recent[2].PRNumber)
 	}
 }
+
+func TestRecordAndGetIssue(t *testing.T) {
+	s := newTestStore(t)
+
+	_, found, err := s.GetIssue("o/r", 1)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if found {
+		t.Fatal("expected no issue before recording")
+	}
+
+	rec := IssueRecord{Repo: "o/r", PRNumber: 1, IssueNumber: 10, IssueURL: "https://github.com/o/r/issues/10", CreatedAt: time.Now()}
+	if err := s.RecordIssue(rec); err != nil {
+		t.Fatalf("RecordIssue: %v", err)
+	}
+
+	got, found, err := s.GetIssue("o/r", 1)
+	if err != nil || !found {
+		t.Fatalf("GetIssue after record: found=%v err=%v", found, err)
+	}
+	if got.IssueNumber != 10 || got.IssueURL != rec.IssueURL {
+		t.Errorf("got %+v, want issue 10", got)
+	}
+
+	// Re-recording the same PR replaces rather than duplicates.
+	rec.IssueNumber = 11
+	if err := s.RecordIssue(rec); err != nil {
+		t.Fatalf("RecordIssue overwrite: %v", err)
+	}
+	got, _, _ = s.GetIssue("o/r", 1)
+	if got.IssueNumber != 11 {
+		t.Errorf("IssueNumber = %d, want 11", got.IssueNumber)
+	}
+
+	if _, found, _ := s.GetIssue("o/r", 2); found {
+		t.Error("unexpected issue for other PR")
+	}
+}

@@ -26,6 +26,15 @@ type ReviewRecord struct {
 	ReviewedAt      time.Time
 }
 
+// IssueRecord links a PR to the GitHub issue opened for its findings.
+type IssueRecord struct {
+	Repo        string
+	PRNumber    int64
+	IssueNumber int64
+	IssueURL    string
+	CreatedAt   time.Time
+}
+
 // DefaultDBPath returns the default path to the SQLite database.
 func DefaultDBPath() string {
 	return filepath.Join(configDir(), "state.db")
@@ -107,7 +116,16 @@ CREATE TABLE IF NOT EXISTS daily_counts (
 	count INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_reviewed_prs_repo_pr ON reviewed_prs(repo, pr_number);`
+CREATE INDEX IF NOT EXISTS idx_reviewed_prs_repo_pr ON reviewed_prs(repo, pr_number);
+
+CREATE TABLE IF NOT EXISTS created_issues (
+	repo         TEXT    NOT NULL,
+	pr_number    INTEGER NOT NULL,
+	issue_number INTEGER NOT NULL,
+	issue_url    TEXT    NOT NULL DEFAULT '',
+	created_at   TEXT    NOT NULL,
+	PRIMARY KEY (repo, pr_number)
+);`
 
 	_, err := db.Exec(ddl)
 	if err != nil {
@@ -355,4 +373,40 @@ func migrateAddClosedAtColumn(db *sql.DB) error {
 	}
 	_, err = db.Exec("ALTER TABLE reviewed_prs ADD COLUMN closed_at TEXT NOT NULL DEFAULT ''")
 	return err
+}
+
+// RecordIssue stores the issue opened for a PR. One issue per PR is kept.
+func (s *Store) RecordIssue(r IssueRecord) error {
+	_, err := s.db.Exec(
+		`INSERT INTO created_issues (repo, pr_number, issue_number, issue_url, created_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(repo, pr_number) DO UPDATE SET
+		   issue_number = excluded.issue_number,
+		   issue_url = excluded.issue_url,
+		   created_at = excluded.created_at`,
+		r.Repo, r.PRNumber, r.IssueNumber, r.IssueURL, r.CreatedAt.UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+// GetIssue returns the issue opened for a PR. The bool is false when none exists.
+func (s *Store) GetIssue(repo string, prNumber int64) (IssueRecord, bool, error) {
+	var r IssueRecord
+	var createdAt string
+	err := s.db.QueryRow(
+		`SELECT repo, pr_number, issue_number, issue_url, created_at
+		 FROM created_issues WHERE repo = ? AND pr_number = ?`,
+		repo, prNumber,
+	).Scan(&r.Repo, &r.PRNumber, &r.IssueNumber, &r.IssueURL, &createdAt)
+	if err == sql.ErrNoRows {
+		return IssueRecord{}, false, nil
+	}
+	if err != nil {
+		return IssueRecord{}, false, err
+	}
+	r.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return IssueRecord{}, false, fmt.Errorf("parsing created_at %q: %w", createdAt, err)
+	}
+	return r, true, nil
 }

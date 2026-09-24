@@ -462,3 +462,22 @@ func TestSplitRepo(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePRView(t *testing.T) {
+	data := []byte(`{"number":42,"title":"Fix bug","url":"https://github.com/o/r/pull/42","isDraft":false,"additions":10,"deletions":3,"changedFiles":2,"author":{"login":"alice"},"labels":[{"name":"automerge"},{"name":"bug"}]}`)
+	pr, err := parsePRView(data, "o/r")
+	if err != nil {
+		t.Fatalf("parsePRView: %v", err)
+	}
+	if pr.Repo != "o/r" || pr.Number != 42 || pr.Title != "Fix bug" || pr.Author != "alice" ||
+		pr.URL != "https://github.com/o/r/pull/42" || pr.Files != 2 || pr.Additions != 10 || pr.Deletions != 3 {
+		t.Errorf("unexpected PR: %+v", pr)
+	}
+	if len(pr.Labels) != 2 || pr.Labels[0] != "automerge" || pr.Labels[1] != "bug" {
+		t.Errorf("Labels = %v", pr.Labels)
+	}
+
+	if _, err := parsePRView([]byte("not json"), "o/r"); err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
