@@ -9,7 +9,8 @@ import (
 )
 
 // CreateIssue opens an issue via `gh issue create` and returns its number and URL.
-// The body is passed on stdin to avoid argv length limits.
+// The body is passed on stdin to avoid argv length limits. A non-empty URL
+// with an error means the issue was created but its number could not be parsed.
 func CreateIssue(repo string, title string, body string, labels []string) (int64, string, error) {
 	args := []string{
 		"issue", "create",
@@ -45,9 +46,9 @@ func CreateIssue(repo string, title string, body string, labels []string) (int64
 }
 
 // CommentOnIssue adds a comment to an existing issue via `gh issue comment`.
-func CommentOnIssue(repo string, number int64, body string) error {
-	cmd := exec.Command("gh", "issue", "comment",
-		fmt.Sprintf("%d", number),
+// ref is an issue number or URL.
+func CommentOnIssue(repo string, ref string, body string) error {
+	cmd := exec.Command("gh", "issue", "comment", ref,
 		"-R", repo,
 		"--body-file", "-",
 	)
@@ -59,12 +60,36 @@ func CommentOnIssue(repo string, number int64, body string) error {
 	if err := cmd.Run(); err != nil {
 		errMsg := strings.TrimSpace(stderr.String())
 		if errMsg != "" {
-			return fmt.Errorf("gh issue comment %s#%d failed: %s: %w", repo, number, errMsg, err)
+			return fmt.Errorf("gh issue comment %s %s failed: %s: %w", repo, ref, errMsg, err)
 		}
-		return fmt.Errorf("gh issue comment %s#%d failed: %w", repo, number, err)
+		return fmt.Errorf("gh issue comment %s %s failed: %w", repo, ref, err)
 	}
 
 	return nil
+}
+
+// GetIssueState returns the state of an issue ("OPEN" or "CLOSED").
+// ref is an issue number or URL.
+func GetIssueState(repo string, ref string) (string, error) {
+	cmd := exec.Command("gh", "issue", "view", ref,
+		"-R", repo,
+		"--json", "state",
+		"--jq", ".state",
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return "", fmt.Errorf("gh issue view %s %s failed: %s: %w", repo, ref, errMsg, err)
+		}
+		return "", fmt.Errorf("gh issue view %s %s failed: %w", repo, ref, err)
+	}
+
+	return strings.TrimSpace(string(out)), nil
 }
 
 // parseIssueURL returns the last non-empty line of gh output, which is the issue URL.

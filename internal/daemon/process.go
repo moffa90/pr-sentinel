@@ -45,6 +45,12 @@ func isSelfAuthored(opts PollOptions, pr github.PullRequest) bool {
 // recording, and notifications. It returns an error only when publishing
 // fails, in which case nothing is recorded.
 func ProcessReview(store *state.Store, notify *notifier.Dispatcher, opts PollOptions, repo config.RepoConfig, pr github.PullRequest, rr reviewer.ReviewResult) (ProcessOutcome, error) {
+	return ProcessReviewWith(store, notify, opts, repo, pr, rr, GitHubCLI{})
+}
+
+// ProcessReviewWith is the testable version of ProcessReview that accepts
+// the GitHub actions implementation.
+func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts PollOptions, repo config.RepoConfig, pr github.PullRequest, rr reviewer.ReviewResult, gh GitHubActions) (ProcessOutcome, error) {
 	var out ProcessOutcome
 
 	verdict := ""
@@ -64,7 +70,7 @@ func ProcessReview(store *state.Store, notify *notifier.Dispatcher, opts PollOpt
 			postVerdict = "comment"
 		}
 		if err := retry.Do(3, 2*time.Second, "post review", func() error {
-			return publisher.PostLiveReview(repo.Name, pr.Number, body, postVerdict)
+			return gh.PostReview(repo.Name, pr.Number, body, postVerdict)
 		}); err != nil {
 			return out, fmt.Errorf("posting review: %w", err)
 		}
@@ -90,10 +96,10 @@ func ProcessReview(store *state.Store, notify *notifier.Dispatcher, opts PollOpt
 	}
 
 	if repo.AutoMerge.Enabled && verdict == "approve" && !selfAuthored {
-		out.AutoMerge = autoMerge(repo, pr, rr.Review)
+		out.AutoMerge = autoMerge(gh, repo, pr, rr.Review)
 	}
 
-	out.Issue = handleIssues(store, GitHubIssueClient{}, repo, pr, rr.Review)
+	out.Issue = handleIssues(store, gh, repo, pr, rr.Review)
 
 	if err := store.RecordReview(state.ReviewRecord{
 		Repo:            repo.Name,
@@ -140,7 +146,7 @@ func ProcessReview(store *state.Store, notify *notifier.Dispatcher, opts PollOpt
 
 // autoMerge applies the auto-merge gates (no HIGH/MEDIUM findings, required
 // label) and enables GitHub auto-merge in live mode. Returns a status string.
-func autoMerge(repo config.RepoConfig, pr github.PullRequest, review *reviewer.StructuredReview) string {
+func autoMerge(gh GitHubActions, repo config.RepoConfig, pr github.PullRequest, review *reviewer.StructuredReview) string {
 	if review != nil {
 		for _, f := range review.Findings {
 			if f.Severity == "HIGH" || f.Severity == "MEDIUM" {
@@ -161,7 +167,7 @@ func autoMerge(repo config.RepoConfig, pr github.PullRequest, review *reviewer.S
 		return fmt.Sprintf("Would merge (%s)", strategy)
 	}
 
-	if err := github.EnableAutoMerge(repo.Name, pr.Number, strategy, repo.AutoMerge.DeleteBranch); err != nil {
+	if err := gh.EnableAutoMerge(repo.Name, pr.Number, strategy, repo.AutoMerge.DeleteBranch); err != nil {
 		slog.Warn("auto-merge failed", "repo", repo.Name, "pr", pr.Number, "error", err)
 		return fmt.Sprintf("Failed: %s", err)
 	}

@@ -316,3 +316,14 @@ func TestRecordAndGetIssue(t *testing.T) {
 		t.Error("unexpected issue for other PR")
 	}
 }
+
+func TestOpenSetsBusyTimeout(t *testing.T) {
+	s := newTestStore(t)
+	var timeout int
+	if err := s.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("PRAGMA busy_timeout: %v", err)
+	}
+	if timeout != busyTimeoutMS {
+		t.Errorf("busy_timeout = %d, want %d", timeout, busyTimeoutMS)
+	}
+}

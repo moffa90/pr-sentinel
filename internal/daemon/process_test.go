@@ -69,18 +69,18 @@ func TestAutoMergeGates(t *testing.T) {
 	pr := github.PullRequest{Number: 1}
 
 	blocking := &reviewer.StructuredReview{Findings: []reviewer.Finding{{Severity: "MEDIUM"}}}
-	if got := autoMerge(repo, pr, blocking); !strings.HasPrefix(got, "Skipped (has HIGH/MEDIUM") {
+	if got := autoMerge(&mockGitHub{}, repo, pr, blocking); !strings.HasPrefix(got, "Skipped (has HIGH/MEDIUM") {
 		t.Errorf("blocking findings: got %q", got)
 	}
 
 	labelled := repo
 	labelled.AutoMerge.RequireLabel = "automerge"
-	if got := autoMerge(labelled, pr, nil); !strings.HasPrefix(got, "Skipped (missing label") {
+	if got := autoMerge(&mockGitHub{}, labelled, pr, nil); !strings.HasPrefix(got, "Skipped (missing label") {
 		t.Errorf("missing label: got %q", got)
 	}
 
 	pr.Labels = []string{"AutoMerge"}
-	if got := autoMerge(labelled, pr, nil); got != "Would merge (squash)" {
+	if got := autoMerge(&mockGitHub{}, labelled, pr, nil); got != "Would merge (squash)" {
 		t.Errorf("label present, dry-run: got %q", got)
 	}
 }
@@ -122,4 +122,58 @@ func TestProcessReview_DryRunRecordsState(t *testing.T) {
 	if rec.FindingsSummary != "1 LOW" {
 		t.Errorf("FindingsSummary = %q, want %q", rec.FindingsSummary, "1 LOW")
 	}
+}
+
+func TestProcessReviewWith_Live(t *testing.T) {
+	approve := func(findings ...reviewer.Finding) reviewer.ReviewResult {
+		return reviewer.ReviewResult{
+			Output: "{}",
+			Review: &reviewer.StructuredReview{Verdict: reviewer.VerdictApprove, Summary: "ok", Findings: findings},
+		}
+	}
+	repo := config.RepoConfig{
+		Name:      "o/r",
+		Mode:      config.ModeLive,
+		AutoMerge: config.AutoMergeConfig{Enabled: true, Strategy: "squash"},
+		Issues:    config.IssuesConfig{Enabled: true, MinSeverity: "LOW"},
+	}
+	opts := PollOptions{GitHubUser: "me"}
+
+	t.Run("posts, merges, opens issue, records", func(t *testing.T) {
+		store, gh := testStore(t), &mockGitHub{}
+		pr := github.PullRequest{Number: 1, Author: "alice"}
+
+		out, err := ProcessReviewWith(store, nil, opts, repo, pr, approve(reviewer.Finding{Severity: "LOW", File: "a.go", Message: "nit"}), gh)
+		if err != nil {
+			t.Fatalf("ProcessReviewWith: %v", err)
+		}
+		if !out.Posted || len(gh.posted) != 1 || gh.posted[0] != "approve" {
+			t.Errorf("posted=%v verdicts=%v", out.Posted, gh.posted)
+		}
+		if gh.merged != 1 || out.AutoMerge != "Enabled (squash)" {
+			t.Errorf("merged=%d status=%q", gh.merged, out.AutoMerge)
+		}
+		if out.Issue != "Created #100" {
+			t.Errorf("issue status = %q", out.Issue)
+		}
+		if reviewed, _ := store.HasReviewed("o/r", 1); !reviewed {
+			t.Error("review not recorded")
+		}
+	})
+
+	t.Run("own PR posts as comment and skips auto-merge", func(t *testing.T) {
+		store, gh := testStore(t), &mockGitHub{}
+		pr := github.PullRequest{Number: 2, Author: "Me"}
+
+		out, err := ProcessReviewWith(store, nil, opts, repo, pr, approve(), gh)
+		if err != nil {
+			t.Fatalf("ProcessReviewWith: %v", err)
+		}
+		if len(gh.posted) != 1 || gh.posted[0] != "comment" {
+			t.Errorf("verdicts = %v, want [comment]", gh.posted)
+		}
+		if gh.merged != 0 || out.AutoMerge != "" {
+			t.Errorf("merged=%d status=%q, want no auto-merge", gh.merged, out.AutoMerge)
+		}
+	})
 }

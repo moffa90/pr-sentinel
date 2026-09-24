@@ -1,2 +1,9 @@
 bin/
 .worktrees/
+
+# Local build output (use bin/)
+/pr-sentinel
+
+# Local Claude Code settings and agent planning docs
+.claude/settings.local.json
+docs/superpowers/

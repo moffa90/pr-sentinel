@@ -65,7 +65,7 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -87,6 +87,20 @@ func Open(path string) (*Store, error) {
 	}
 
 	return &Store{db: db}, nil
+}
+
+// busyTimeoutMS is how long a connection waits for a lock held by another
+// process (e.g. the daemon and the review command writing concurrently)
+// before failing with SQLITE_BUSY.
+const busyTimeoutMS = 5000
+
+// dsn adds per-connection pragmas to the database path. WAL is not enabled
+// because its -wal/-shm side files would not get the 0600 permissions.
+func dsn(path string) string {
+	if path == ":memory:" {
+		return path
+	}
+	return fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)", path, busyTimeoutMS)
 }
 
 // Close closes the underlying database connection.
