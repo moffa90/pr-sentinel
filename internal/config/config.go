@@ -26,6 +26,7 @@ const (
 	DefaultReviewTimeout       = 10 * time.Minute
 	DefaultDisclosureText      = "> AI-assisted review by [pr-sentinel](https://github.com/moffa90/pr-sentinel)"
 	DefaultMaxParallelReviews  = 3
+	DefaultReviewModel         = "opus"
 )
 
 // Config is the top-level configuration.
@@ -48,6 +49,8 @@ type ReviewConfig struct {
 	Instructions   string `yaml:"instructions"`
 	AIDisclosure   bool   `yaml:"ai_disclosure"`
 	DisclosureText string `yaml:"disclosure_text"`
+	Model          string `yaml:"model"`
+	FallbackModel  string `yaml:"fallback_model"`
 }
 
 // NotificationConfig holds notification channel settings.
@@ -85,6 +88,33 @@ type AutoMergeConfig struct {
 	RequireLabel string `yaml:"require_label"`
 }
 
+// IssuesConfig holds per-repo settings for opening GitHub issues from review findings.
+type IssuesConfig struct {
+	Enabled     bool     `yaml:"enabled"`
+	MinSeverity string   `yaml:"min_severity"`
+	Labels      []string `yaml:"labels"`
+}
+
+// Severity levels, lowest to highest.
+var severityRank = map[string]int{"LOW": 1, "MEDIUM": 2, "HIGH": 3}
+
+// DefaultIssueMinSeverity is used when issues.min_severity is empty.
+const DefaultIssueMinSeverity = "HIGH"
+
+// Qualifies reports whether a finding severity meets the configured minimum.
+// Unknown severities never qualify.
+func (ic IssuesConfig) Qualifies(severity string) bool {
+	min := ic.MinSeverity
+	if min == "" {
+		min = DefaultIssueMinSeverity
+	}
+	rank, ok := severityRank[strings.ToUpper(severity)]
+	if !ok {
+		return false
+	}
+	return rank >= severityRank[strings.ToUpper(min)]
+}
+
 // RepoConfig holds per-repository settings.
 type RepoConfig struct {
 	Name               string          `yaml:"name"`
@@ -94,6 +124,7 @@ type RepoConfig struct {
 	ReviewInstructions string          `yaml:"review_instructions"`
 	TeamsWebhook       string          `yaml:"teams_webhook"`
 	AutoMerge          AutoMergeConfig `yaml:"auto_merge"`
+	Issues             IssuesConfig    `yaml:"issues"`
 }
 
 // DefaultConfig returns a Config populated with default values.
@@ -110,6 +141,7 @@ func DefaultConfig() Config {
 			Instructions:   "",
 			AIDisclosure:   true,
 			DisclosureText: DefaultDisclosureText,
+			Model:          DefaultReviewModel,
 		},
 		Notifications: NotificationConfig{
 			MacOS: true,
@@ -197,6 +229,9 @@ func (c *Config) Validate() error {
 	if c.ReviewTimeout <= 0 {
 		return fmt.Errorf("review_timeout must be positive, got %s", c.ReviewTimeout)
 	}
+	if c.Review.FallbackModel != "" && strings.EqualFold(c.Review.FallbackModel, c.Review.Model) {
+		return fmt.Errorf("review.fallback_model must differ from review.model, both are %q", c.Review.Model)
+	}
 	if c.ReposDir == "" {
 		return fmt.Errorf("repos_dir must not be empty")
 	}
@@ -217,6 +252,11 @@ func (c *Config) Validate() error {
 			validStrategies := map[string]bool{"merge": true, "squash": true, "rebase": true}
 			if !validStrategies[r.AutoMerge.Strategy] {
 				return fmt.Errorf("repos[%d].auto_merge.strategy must be merge, squash, or rebase, got %q", i, r.AutoMerge.Strategy)
+			}
+		}
+		if r.Issues.MinSeverity != "" {
+			if _, ok := severityRank[strings.ToUpper(r.Issues.MinSeverity)]; !ok {
+				return fmt.Errorf("repos[%d].issues.min_severity must be HIGH, MEDIUM, or LOW, got %q", i, r.Issues.MinSeverity)
 			}
 		}
 	}

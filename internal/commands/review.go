@@ -11,9 +11,10 @@ import (
 	"strings"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
+	"github.com/moffa90/pr-sentinel/internal/daemon"
 	ghclient "github.com/moffa90/pr-sentinel/internal/github"
-	"github.com/moffa90/pr-sentinel/internal/publisher"
 	"github.com/moffa90/pr-sentinel/internal/reviewer"
+	"github.com/moffa90/pr-sentinel/internal/state"
 	"github.com/moffa90/pr-sentinel/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -81,85 +82,100 @@ func runReview(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("%s Mode: %s\n\n", ui.IconDot, ui.ModeBadge(mode))
 
-	// Build review prompt
-	params := reviewer.ReviewParams{
-		Repo:     repo,
-		PRNumber: prNumber,
+	// Fetch PR metadata so the prompt, body, and state match the daemon
+	pr, err := ghclient.GetPR(repo, prNumber)
+	if err != nil {
+		return fmt.Errorf("fetching PR: %w", err)
 	}
-	prompt := reviewer.BuildReviewPrompt(params)
+	fmt.Printf("%s %s by @%s (%d files, +%d/-%d)\n\n", ui.IconDot, pr.Title, pr.Author, pr.Files, pr.Additions, pr.Deletions)
+	if pr.IsDraft {
+		fmt.Println(ui.MutedStyle.Render("  Note: PR is a draft (the daemon skips drafts)."))
+	}
+
+	store, err := state.Open(state.DefaultDBPath())
+	if err != nil {
+		return fmt.Errorf("opening state store: %w", err)
+	}
+	defer store.Close()
+
+	// Previously reviewed PRs get the daemon's follow-up prompt with the prior review.
+	var prompt string
+	if prev, prevErr := store.GetReview(repo, pr.Number); prevErr == nil {
+		fmt.Printf("%s Previously reviewed %s, running follow-up review\n", ui.IconDot, prev.ReviewedAt.Local().Format("2006-01-02 15:04"))
+		prompt = reviewer.BuildFollowUpPrompt(reviewer.FollowUpParams{
+			Repo:           repo,
+			PRNumber:       pr.Number,
+			PRTitle:        pr.Title,
+			PRAuthor:       pr.Author,
+			Files:          pr.Files,
+			Adds:           pr.Additions,
+			Dels:           pr.Deletions,
+			PreviousReview: prev.ReviewOutput,
+		})
+	} else {
+		prompt = reviewer.BuildReviewPrompt(reviewer.ReviewParams{
+			Repo:     repo,
+			PRNumber: pr.Number,
+			PRTitle:  pr.Title,
+			PRAuthor: pr.Author,
+			Files:    pr.Files,
+			Adds:     pr.Additions,
+			Dels:     pr.Deletions,
+		})
+	}
+
+	opts := daemon.PollOptionsFromConfig(cfg)
+	opts.SkipDailyCount = true
+	if opts.ReviewTimeout == 0 {
+		opts.ReviewTimeout = reviewer.DefaultTimeout
+	}
 
 	// Run Claude review
 	fmt.Printf("%s Running Claude review...\n", ui.IconDot)
 
-	timeout := cfg.ReviewTimeout
-	if timeout == 0 {
-		timeout = reviewer.DefaultTimeout
-	}
-
-	result := reviewer.RunReview(
+	result := reviewer.RunReviewWithModel(
 		context.Background(),
-		repoConf.Path,
+		config.ExpandPath(repoConf.Path),
 		prompt,
-		cfg.Review.Instructions,
+		opts.ReviewInstructions,
 		repoConf.ReviewInstructions,
-		timeout,
+		opts.ReviewTimeout,
+		opts.Model,
 	)
 
 	if result.Error != nil {
 		return fmt.Errorf("review failed: %w", result.Error)
 	}
 
-	fmt.Printf("  %s Review complete (%s)\n\n", ui.IconCheck, result.Duration.Truncate(1e8))
+	fmt.Printf("  %s Review complete (%s, models: %s)\n\n", ui.IconCheck, result.Duration.Truncate(1e8), strings.Join(result.Models, ", "))
 
-	// Show review output
+	// Show the exact body that will be posted or saved
 	fmt.Println(ui.Separator("Review Output"))
 	fmt.Println()
-	fmt.Println(result.Output)
+	fmt.Println(daemon.ReviewBody(opts, pr, result))
 	fmt.Println()
 
-	// Build final body with disclosure
-	body := publisher.BuildReviewBody(result.Output, cfg.Review.AIDisclosure, cfg.Review.DisclosureText, "")
-
-	verdict := ""
-	if result.Review != nil {
-		verdict = string(result.Review.Verdict)
+	if mode == config.ModeLive && !confirmPost() {
+		fmt.Println(ui.MutedStyle.Render("Review not posted."))
+		return nil
 	}
 
-	// Handle mode
-	if mode == config.ModeLive {
-		if !confirmPost() {
-			fmt.Println(ui.MutedStyle.Render("Review not posted."))
-			return nil
-		}
+	repoConf.Mode = mode
+	outcome, err := daemon.ProcessReview(store, daemon.BuildNotifier(cfg), opts, repoConf, pr, result)
+	if err != nil {
+		return err
+	}
 
-		// GitHub rejects --approve/--request-changes on your own PRs.
-		// Detect author via gh pr view and fall back to --comment.
-		postVerdict := verdict
-		if repoConf.ReviewOwnPRs && cfg.GitHubUser != "" {
-			prState, viewErr := ghclient.GetPRAuthor(repo, prNumber)
-			if viewErr == nil && strings.EqualFold(prState, cfg.GitHubUser) {
-				postVerdict = "comment"
-			}
-		}
-
-		fmt.Printf("%s Posting review to GitHub...\n", ui.IconDot)
-		if err := publisher.PostLiveReview(repo, prNumber, body, postVerdict); err != nil {
-			return fmt.Errorf("posting review: %w", err)
-		}
+	if outcome.Posted {
 		fmt.Printf("  %s Review posted to %s\n", ui.IconCheck, ui.PRReference(repo, prNumber))
 	} else {
-		// Dry-run: save to disk
-		reviewsDir := filepath.Join(config.ConfigDir(), "reviews")
-		savePath, err := publisher.SaveDryRunReview(publisher.SaveParams{
-			ReviewsDir: reviewsDir,
-			Repo:       repo,
-			PRNumber:   prNumber,
-			Body:       body,
-		})
-		if err != nil {
-			return fmt.Errorf("saving review: %w", err)
-		}
-		fmt.Printf("  %s Review saved to %s\n", ui.IconCheck, ui.MutedStyle.Render(savePath))
+		fmt.Printf("  %s Review saved to %s\n", ui.IconCheck, ui.MutedStyle.Render(outcome.ReviewPath))
+	}
+	if outcome.AutoMerge != "" {
+		fmt.Printf("  %s Auto-merge: %s\n", ui.IconDot, outcome.AutoMerge)
+	}
+	if outcome.Issue != "" {
+		fmt.Printf("  %s Issue: %s\n", ui.IconDot, outcome.Issue)
 	}
 
 	return nil

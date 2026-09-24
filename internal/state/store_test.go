@@ -277,3 +277,103 @@ func TestRecentReviews(t *testing.T) {
 		t.Errorf("third record PRNumber = %d, want 3", recent[2].PRNumber)
 	}
 }
+
+func TestRecordAndGetIssue(t *testing.T) {
+	s := newTestStore(t)
+
+	_, found, err := s.GetIssue("o/r", 1)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if found {
+		t.Fatal("expected no issue before recording")
+	}
+
+	rec := IssueRecord{Repo: "o/r", PRNumber: 1, IssueNumber: 10, IssueURL: "https://github.com/o/r/issues/10", CreatedAt: time.Now()}
+	if err := s.RecordIssue(rec); err != nil {
+		t.Fatalf("RecordIssue: %v", err)
+	}
+
+	got, found, err := s.GetIssue("o/r", 1)
+	if err != nil || !found {
+		t.Fatalf("GetIssue after record: found=%v err=%v", found, err)
+	}
+	if got.IssueNumber != 10 || got.IssueURL != rec.IssueURL {
+		t.Errorf("got %+v, want issue 10", got)
+	}
+
+	// Re-recording the same PR replaces rather than duplicates.
+	rec.IssueNumber = 11
+	if err := s.RecordIssue(rec); err != nil {
+		t.Fatalf("RecordIssue overwrite: %v", err)
+	}
+	got, _, _ = s.GetIssue("o/r", 1)
+	if got.IssueNumber != 11 {
+		t.Errorf("IssueNumber = %d, want 11", got.IssueNumber)
+	}
+
+	if _, found, _ := s.GetIssue("o/r", 2); found {
+		t.Error("unexpected issue for other PR")
+	}
+}
+
+func TestOpenSetsBusyTimeout(t *testing.T) {
+	s := newTestStore(t)
+	var timeout int
+	if err := s.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("PRAGMA busy_timeout: %v", err)
+	}
+	if timeout != busyTimeoutMS {
+		t.Errorf("busy_timeout = %d, want %d", timeout, busyTimeoutMS)
+	}
+}
+
+func TestClaimIssue(t *testing.T) {
+	s := newTestStore(t)
+
+	claimed, err := s.ClaimIssue("o/r", 1, time.Minute)
+	if err != nil || !claimed {
+		t.Fatalf("first claim: claimed=%v err=%v", claimed, err)
+	}
+	rec, found, _ := s.GetIssue("o/r", 1)
+	if !found || !rec.IsClaim() {
+		t.Fatalf("claim row = %+v found=%v", rec, found)
+	}
+
+	if claimed, _ := s.ClaimIssue("o/r", 1, time.Minute); claimed {
+		t.Error("second claim while fresh should fail")
+	}
+
+	// A stale claim can be taken over.
+	if claimed, _ := s.ClaimIssue("o/r", 1, -time.Minute); !claimed {
+		t.Error("stale claim should be taken over")
+	}
+
+	// A fulfilled claim can never be claimed again.
+	if err := s.RecordIssue(IssueRecord{Repo: "o/r", PRNumber: 1, IssueNumber: 7, IssueURL: "u", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("RecordIssue: %v", err)
+	}
+	if claimed, _ := s.ClaimIssue("o/r", 1, -time.Minute); claimed {
+		t.Error("claim over a real issue should fail")
+	}
+	if err := s.ReleaseIssueClaim("o/r", 1); err != nil {
+		t.Fatalf("ReleaseIssueClaim: %v", err)
+	}
+	if _, found, _ := s.GetIssue("o/r", 1); !found {
+		t.Error("ReleaseIssueClaim must not delete a real issue")
+	}
+
+	if err := s.DeleteIssue("o/r", 1); err != nil {
+		t.Fatalf("DeleteIssue: %v", err)
+	}
+	if _, found, _ := s.GetIssue("o/r", 1); found {
+		t.Error("DeleteIssue should remove the record")
+	}
+
+	// Release removes an unfulfilled claim.
+	s.ClaimIssue("o/r", 2, time.Minute)
+	s.ReleaseIssueClaim("o/r", 2)
+	if _, found, _ := s.GetIssue("o/r", 2); found {
+		t.Error("released claim should be gone")
+	}
+}

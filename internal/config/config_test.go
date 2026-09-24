@@ -347,3 +347,49 @@ func TestValidate_AutoMerge(t *testing.T) {
 		}
 	})
 }
+
+func TestValidate_IssuesMinSeverity(t *testing.T) {
+	tests := []struct {
+		name    string
+		min     string
+		wantErr bool
+	}{
+		{"empty uses default", "", false},
+		{"high", "HIGH", false},
+		{"lowercase medium", "medium", false},
+		{"low", "LOW", false},
+		{"invalid", "CRITICAL", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Repos = []RepoConfig{{
+				Name:   "owner/repo",
+				Path:   "/tmp",
+				Mode:   ModeLive,
+				Issues: IssuesConfig{Enabled: true, MinSeverity: tt.min},
+			}}
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestReviewModel(t *testing.T) {
+	if got := DefaultConfig().Review.Model; got != DefaultReviewModel {
+		t.Errorf("default Review.Model = %q, want %q", got, DefaultReviewModel)
+	}
+
+	cfg := DefaultConfig()
+	cfg.Review.FallbackModel = "sonnet"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("distinct fallback should pass: %v", err)
+	}
+
+	cfg.Review.FallbackModel = "OPUS"
+	if err := cfg.Validate(); err == nil {
+		t.Error("fallback equal to model should fail validation")
+	}
+}
