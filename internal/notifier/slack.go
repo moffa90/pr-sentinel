@@ -46,5 +46,9 @@ func buildSlackPayload(e Event) slackPayload {
 		text += fmt.Sprintf("\nAuto-merge: %s", e.AutoMerge)
 	}
 
+	if e.Issue != "" {
+		text += fmt.Sprintf("\nIssue: %s", e.Issue)
+	}
+
 	return slackPayload{Text: text}
 }

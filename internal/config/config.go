@@ -20,28 +20,28 @@ const (
 
 // Default values
 const (
-	DefaultPollInterval        = 10 * time.Minute
-	DefaultMaxReviewsCycle     = 5
-	DefaultMaxReviewsDay       = 20
-	DefaultReviewTimeout       = 10 * time.Minute
-	DefaultDisclosureText      = "> AI-assisted review by [pr-sentinel](https://github.com/moffa90/pr-sentinel)"
-	DefaultMaxParallelReviews  = 3
-	DefaultReviewModel         = "opus"
+	DefaultPollInterval       = 10 * time.Minute
+	DefaultMaxReviewsCycle    = 5
+	DefaultMaxReviewsDay      = 20
+	DefaultReviewTimeout      = 10 * time.Minute
+	DefaultDisclosureText     = "> AI-assisted review by [pr-sentinel](https://github.com/moffa90/pr-sentinel)"
+	DefaultMaxParallelReviews = 3
+	DefaultReviewModel        = "opus"
 )
 
 // Config is the top-level configuration.
 type Config struct {
-	PollInterval       time.Duration       `yaml:"poll_interval"`
-	MaxReviewsPerCycle int                 `yaml:"max_reviews_per_cycle"`
-	MaxReviewsPerDay   int                 `yaml:"max_reviews_per_day"`
-	MaxParallelReviews int                 `yaml:"max_parallel_reviews"`
-	ReposDir           string              `yaml:"repos_dir"`
-	ReviewTimeout      time.Duration       `yaml:"review_timeout"`
-	GitHubUser         string              `yaml:"github_user"`
-	Review             ReviewConfig        `yaml:"review"`
-	Notifications      NotificationConfig  `yaml:"notifications"`
-	Repos              []RepoConfig        `yaml:"repos"`
-	Schedule           schedule.Config     `yaml:"schedule"`
+	PollInterval       time.Duration      `yaml:"poll_interval"`
+	MaxReviewsPerCycle int                `yaml:"max_reviews_per_cycle"`
+	MaxReviewsPerDay   int                `yaml:"max_reviews_per_day"`
+	MaxParallelReviews int                `yaml:"max_parallel_reviews"`
+	ReposDir           string             `yaml:"repos_dir"`
+	ReviewTimeout      time.Duration      `yaml:"review_timeout"`
+	GitHubUser         string             `yaml:"github_user"`
+	Review             ReviewConfig       `yaml:"review"`
+	Notifications      NotificationConfig `yaml:"notifications"`
+	Repos              []RepoConfig       `yaml:"repos"`
+	Schedule           schedule.Config    `yaml:"schedule"`
 }
 
 // ReviewConfig holds review behaviour settings.

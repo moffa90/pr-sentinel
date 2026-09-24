@@ -28,6 +28,9 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <!-- 63 = 0077: log files and anything else the daemon creates are owner-only -->
+    <key>Umask</key>
+    <integer>63</integer>
     <key>StandardOutPath</key>
     <string>{{.LogDir}}/daemon.stdout.log</string>
     <key>StandardErrorPath</key>

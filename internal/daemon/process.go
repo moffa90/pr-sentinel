@@ -111,6 +111,7 @@ func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts Pol
 		Mode:            mode,
 		Posted:          out.Posted,
 		CostUSD:         rr.CostUSD,
+		Models:          strings.Join(rr.Models, ","),
 		ReviewedAt:      time.Now().UTC(),
 	}); err != nil {
 		slog.Error("failed to record review", "repo", repo.Name, "pr", pr.Number, "error", err)
@@ -127,6 +128,7 @@ func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts Pol
 		mode, out.Posted, findingsSummary, out.ReviewPath, verdict, summary,
 	)
 	evt.AutoMerge = out.AutoMerge
+	evt.Issue = out.Issue
 
 	// Send to per-repo Teams webhook if configured
 	if repo.TeamsWebhook != "" {

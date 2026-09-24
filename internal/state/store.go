@@ -23,6 +23,7 @@ type ReviewRecord struct {
 	Mode            string
 	Posted          bool
 	CostUSD         float64
+	Models          string // comma-separated model IDs the claude CLI reported
 	ReviewedAt      time.Time
 }
 
@@ -122,6 +123,7 @@ CREATE TABLE IF NOT EXISTS reviewed_prs (
 	posted           INTEGER NOT NULL DEFAULT 0,
 	cost_usd         REAL    NOT NULL DEFAULT 0,
 	closed_at        TEXT    NOT NULL DEFAULT '',
+	models           TEXT    NOT NULL DEFAULT '',
 	reviewed_at      TEXT    NOT NULL
 );
 
@@ -158,7 +160,12 @@ CREATE TABLE IF NOT EXISTS created_issues (
 	}
 
 	// Add closed_at column if missing
-	return migrateAddClosedAtColumn(db)
+	if err := migrateAddClosedAtColumn(db); err != nil {
+		return err
+	}
+
+	// Add models column if missing
+	return migrateAddModelsColumn(db)
 }
 
 // migrateDropUnique recreates reviewed_prs without the UNIQUE(repo, pr_number)
@@ -217,8 +224,8 @@ func migrateAddCostColumn(db *sql.DB) error {
 // RecordReview appends a review record. Multiple reviews per PR are preserved.
 func (s *Store) RecordReview(r ReviewRecord) error {
 	const query = `
-INSERT INTO reviewed_prs (repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, reviewed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+INSERT INTO reviewed_prs (repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, models, reviewed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	posted := 0
 	if r.Posted {
@@ -228,7 +235,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.Exec(query,
 		r.Repo, r.PRNumber, r.PRTitle, r.PRAuthor,
 		r.ReviewOutput, r.FindingsSummary, r.Mode,
-		posted, r.CostUSD, r.ReviewedAt.UTC().Format(time.RFC3339),
+		posted, r.CostUSD, r.Models, r.ReviewedAt.UTC().Format(time.RFC3339),
 	)
 	return err
 }
@@ -253,12 +260,12 @@ func (s *Store) GetReview(repo string, prNumber int64) (ReviewRecord, error) {
 	var reviewedAt string
 
 	err := s.db.QueryRow(
-		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, reviewed_at
+		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, models, reviewed_at
 		 FROM reviewed_prs WHERE repo = ? AND pr_number = ?
 		 ORDER BY reviewed_at DESC LIMIT 1`,
 		repo, prNumber,
 	).Scan(&r.ID, &r.Repo, &r.PRNumber, &r.PRTitle, &r.PRAuthor,
-		&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &reviewedAt)
+		&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &r.Models, &reviewedAt)
 	if err != nil {
 		return ReviewRecord{}, err
 	}
@@ -313,7 +320,7 @@ func (s *Store) DailyCost(date string) (float64, error) {
 // RecentReviews returns the most recent review records ordered by reviewed_at descending.
 func (s *Store) RecentReviews(limit int) ([]ReviewRecord, error) {
 	rows, err := s.db.Query(
-		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, reviewed_at
+		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, models, reviewed_at
 		 FROM reviewed_prs ORDER BY reviewed_at DESC LIMIT ?`,
 		limit,
 	)
@@ -329,7 +336,7 @@ func (s *Store) RecentReviews(limit int) ([]ReviewRecord, error) {
 		var reviewedAt string
 
 		if err := rows.Scan(&r.ID, &r.Repo, &r.PRNumber, &r.PRTitle, &r.PRAuthor,
-			&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &reviewedAt); err != nil {
+			&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &r.Models, &reviewedAt); err != nil {
 			return nil, err
 		}
 
@@ -467,5 +474,19 @@ func (s *Store) ReleaseIssueClaim(repo string, prNumber int64) error {
 // and a new one should be opened.
 func (s *Store) DeleteIssue(repo string, prNumber int64) error {
 	_, err := s.db.Exec(`DELETE FROM created_issues WHERE repo = ? AND pr_number = ?`, repo, prNumber)
+	return err
+}
+
+// migrateAddModelsColumn adds the models column to existing databases.
+func migrateAddModelsColumn(db *sql.DB) error {
+	var tableSql string
+	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviewed_prs'").Scan(&tableSql)
+	if err != nil {
+		return nil
+	}
+	if strings.Contains(tableSql, "models") {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE reviewed_prs ADD COLUMN models TEXT NOT NULL DEFAULT ''")
 	return err
 }

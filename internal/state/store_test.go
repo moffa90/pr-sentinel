@@ -1,6 +1,7 @@
 package state
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -375,5 +376,50 @@ func TestClaimIssue(t *testing.T) {
 	s.ReleaseIssueClaim("o/r", 2)
 	if _, found, _ := s.GetIssue("o/r", 2); found {
 		t.Error("released claim should be gone")
+	}
+}
+
+func TestMigrateAddsModelsColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+
+	// Build a database with the pre-models schema.
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	_, err = old.Exec(`CREATE TABLE reviewed_prs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		repo TEXT NOT NULL, pr_number INTEGER NOT NULL,
+		pr_title TEXT NOT NULL DEFAULT '', pr_author TEXT NOT NULL DEFAULT '',
+		review_output TEXT NOT NULL DEFAULT '', findings_summary TEXT NOT NULL DEFAULT '',
+		mode TEXT NOT NULL DEFAULT '', posted INTEGER NOT NULL DEFAULT 0,
+		cost_usd REAL NOT NULL DEFAULT 0, closed_at TEXT NOT NULL DEFAULT '',
+		reviewed_at TEXT NOT NULL);
+		INSERT INTO reviewed_prs (repo, pr_number, reviewed_at) VALUES ('o/r', 1, '2026-01-01T00:00:00Z');`)
+	if err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+	old.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open after migration: %v", err)
+	}
+	defer s.Close()
+
+	rec, err := s.GetReview("o/r", 1)
+	if err != nil {
+		t.Fatalf("GetReview on migrated row: %v", err)
+	}
+	if rec.Models != "" {
+		t.Errorf("migrated row Models = %q, want empty", rec.Models)
+	}
+
+	if err := s.RecordReview(ReviewRecord{Repo: "o/r", PRNumber: 2, Models: "claude-opus-5-5", ReviewedAt: time.Now()}); err != nil {
+		t.Fatalf("RecordReview: %v", err)
+	}
+	rec, err = s.GetReview("o/r", 2)
+	if err != nil || rec.Models != "claude-opus-5-5" {
+		t.Errorf("Models = %q, err = %v; want claude-opus-5-5", rec.Models, err)
 	}
 }
