@@ -43,7 +43,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\n%s Recent reviews (%d):\n\n", ui.IconDot, len(records))
 
-	headers := []string{"Timestamp", "Action", "PR", "Title"}
+	headers := []string{"Timestamp", "Action", "PR", "Model", "Title"}
 	var rows [][]string
 
 	for _, r := range records {
@@ -60,7 +60,12 @@ func runLogs(cmd *cobra.Command, args []string) error {
 			title = title[:47] + "..."
 		}
 
-		rows = append(rows, []string{ts, action, pr, title})
+		model := r.Models
+		if model == "" {
+			model = ui.MutedStyle.Render("—")
+		}
+
+		rows = append(rows, []string{ts, action, pr, model, title})
 	}
 
 	fmt.Println(ui.StatusTable(headers, rows))

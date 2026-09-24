@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
@@ -55,6 +55,16 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	if len(cfg.Repos) == 0 {
 		return fmt.Errorf("no repos configured — run `pr-sentinel init` first")
+	}
+
+	// launchd captures stdout/stderr without rotation; log to a rotating file instead.
+	if daemonMode {
+		level := slog.LevelInfo
+		if verbose, _ := cmd.Flags().GetBool("verbose"); verbose {
+			level = slog.LevelDebug
+		}
+		logFile := daemon.SetupDaemonLogging(level)
+		defer logFile.Close()
 	}
 
 	// Open state store
@@ -122,7 +132,7 @@ func startDaemon() error {
 	}
 
 	fmt.Printf("\n  %s Daemon started\n", ui.IconCheck)
-	fmt.Printf("  Logs: %s\n\n", ui.MutedStyle.Render(filepath.Join(config.ConfigDir(), "daemon.log")))
+	fmt.Printf("  Logs: %s\n\n", ui.MutedStyle.Render(daemon.DaemonLogPath()))
 	return nil
 }
 

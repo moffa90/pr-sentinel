@@ -115,6 +115,13 @@ func buildTeamsPayload(e Event) map[string]interface{} {
 		})
 	}
 
+	if e.Issue != "" {
+		facts = append(facts, map[string]interface{}{
+			"title": "Issue",
+			"value": e.Issue,
+		})
+	}
+
 	body = append(body, map[string]interface{}{
 		"type":  "FactSet",
 		"facts": facts,

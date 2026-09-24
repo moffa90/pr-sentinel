@@ -233,3 +233,25 @@ func TestBuildTeamsPayload(t *testing.T) {
 	}
 }
 
+
+func TestPayloadsIncludeIssue(t *testing.T) {
+	e := NewEvent("o/r", 1, "t", "alice", "https://github.com/o/r/pull/1", "live", true, "1 LOW", "", "approve", "ok")
+	e.Issue = "Created #7"
+
+	if !strings.Contains(buildSlackPayload(e).Text, "Issue: Created #7") {
+		t.Error("slack payload missing issue status")
+	}
+
+	raw, err := json.Marshal(buildTeamsPayload(e))
+	if err != nil {
+		t.Fatalf("marshal teams payload: %v", err)
+	}
+	if !strings.Contains(string(raw), `"Created #7"`) {
+		t.Errorf("teams payload missing issue status: %s", raw)
+	}
+
+	withoutIssue := NewEvent("o/r", 1, "t", "alice", "", "live", true, "", "", "approve", "")
+	if strings.Contains(buildSlackPayload(withoutIssue).Text, "Issue:") {
+		t.Error("slack payload should omit empty issue status")
+	}
+}

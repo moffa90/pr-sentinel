@@ -19,6 +19,7 @@ type Event struct {
 	Verdict         string `json:"verdict,omitempty"`
 	Summary         string `json:"summary,omitempty"`
 	AutoMerge       string `json:"auto_merge,omitempty"`
+	Issue           string `json:"issue,omitempty"`
 	Timestamp       string `json:"timestamp"`
 }
 
