@@ -116,8 +116,10 @@ func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts Pol
 		slog.Error("failed to record review", "repo", repo.Name, "pr", pr.Number, "error", err)
 	}
 
-	if err := store.IncrementDailyCount(time.Now().UTC().Format("2006-01-02")); err != nil {
-		slog.Error("failed to increment daily count", "error", err)
+	if !opts.SkipDailyCount {
+		if err := store.IncrementDailyCount(time.Now().UTC().Format("2006-01-02")); err != nil {
+			slog.Error("failed to increment daily count", "error", err)
+		}
 	}
 
 	evt := notifier.NewEvent(
@@ -149,7 +151,7 @@ func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts Pol
 func autoMerge(gh GitHubActions, repo config.RepoConfig, pr github.PullRequest, review *reviewer.StructuredReview) string {
 	if review != nil {
 		for _, f := range review.Findings {
-			if f.Severity == "HIGH" || f.Severity == "MEDIUM" {
+			if strings.EqualFold(f.Severity, "HIGH") || strings.EqualFold(f.Severity, "MEDIUM") {
 				slog.Info("auto-merge skipped due to findings", "repo", repo.Name, "pr", pr.Number)
 				return "Skipped (has HIGH/MEDIUM findings)"
 			}

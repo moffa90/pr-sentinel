@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
 	"github.com/moffa90/pr-sentinel/internal/github"
@@ -176,4 +177,36 @@ func TestProcessReviewWith_Live(t *testing.T) {
 			t.Errorf("merged=%d status=%q, want no auto-merge", gh.merged, out.AutoMerge)
 		}
 	})
+}
+
+func TestProcessReviewWith_SkipDailyCount(t *testing.T) {
+	today := time.Now().UTC().Format("2006-01-02")
+	repo := config.RepoConfig{Name: "o/r", Mode: config.ModeLive}
+
+	for _, skip := range []bool{false, true} {
+		store, gh := testStore(t), &mockGitHub{}
+		if _, err := ProcessReviewWith(store, nil, PollOptions{SkipDailyCount: skip}, repo, github.PullRequest{Number: 1}, structuredResult(), gh); err != nil {
+			t.Fatalf("ProcessReviewWith: %v", err)
+		}
+		count, _ := store.GetDailyCount(today)
+		want := 1
+		if skip {
+			want = 0
+		}
+		if count != want {
+			t.Errorf("SkipDailyCount=%v: daily count = %d, want %d", skip, count, want)
+		}
+	}
+}
+
+func TestAutoMergeGates_CaseInsensitive(t *testing.T) {
+	repo := config.RepoConfig{Name: "o/r", Mode: config.ModeLive, AutoMerge: config.AutoMergeConfig{Enabled: true, Strategy: "squash"}}
+	gh := &mockGitHub{}
+	lower := &reviewer.StructuredReview{Findings: []reviewer.Finding{{Severity: "high"}}}
+	if got := autoMerge(gh, repo, github.PullRequest{Number: 1}, lower); !strings.HasPrefix(got, "Skipped (has HIGH/MEDIUM") {
+		t.Errorf("lowercase high: got %q", got)
+	}
+	if gh.merged != 0 {
+		t.Errorf("merged=%d, want 0", gh.merged)
+	}
 }

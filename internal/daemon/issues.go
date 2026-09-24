@@ -75,34 +75,42 @@ func qualifyingFindings(ic config.IssuesConfig, findings []reviewer.Finding) []r
 	return out
 }
 
+// issueClaimTTL is how long a claim from ClaimIssue blocks other processes
+// before it is considered stale and can be taken over.
+const issueClaimTTL = 10 * time.Minute
+
 func buildIssueTitle(pr github.PullRequest) string {
-	return fmt.Sprintf("pr-sentinel: review findings for #%d %s", pr.Number, pr.Title)
+	return fmt.Sprintf("pr-sentinel: follow-ups from #%d %s", pr.Number, pr.Title)
 }
 
-// buildIssueBody renders findings as a checklist. Referencing #N cross-links the PR.
-func buildIssueBody(pr github.PullRequest, findings []reviewer.Finding, followUp bool) string {
+// buildIssueBody renders the findings left on an approved PR as a checklist.
+// Referencing #N cross-links the PR; finding text is neutralized so it can't
+// ping users or cross-link other issues.
+func buildIssueBody(pr github.PullRequest, findings []reviewer.Finding, existing bool) string {
 	var b strings.Builder
-	if followUp {
-		fmt.Fprintf(&b, "Follow-up review of #%d still reports %d finding(s):\n\n", pr.Number, len(findings))
+	if existing {
+		fmt.Fprintf(&b, "A later approved review of #%d left %d finding(s):\n\n", pr.Number, len(findings))
 	} else {
-		fmt.Fprintf(&b, "Review of #%d (by @%s) reported %d finding(s):\n\n", pr.Number, pr.Author, len(findings))
+		fmt.Fprintf(&b, "#%d (by @%s) was approved with %d finding(s) left to address:\n\n", pr.Number, pr.Author, len(findings))
 	}
 	for _, f := range findings {
 		loc := f.File
 		if f.Line > 0 {
 			loc = fmt.Sprintf("%s:%d", f.File, f.Line)
 		}
-		fmt.Fprintf(&b, "- [ ] **%s** `%s` — %s\n", strings.ToUpper(f.Severity), loc, f.Message)
+		fmt.Fprintf(&b, "- [ ] **%s** `%s` — %s\n", strings.ToUpper(f.Severity), loc, reviewer.NeutralizeMentions(f.Message))
 	}
 	b.WriteString("\n_Opened by pr-sentinel._\n")
 	return b.String()
 }
 
-// handleIssues opens an issue for qualifying findings, or comments on the PR's
-// existing issue on follow-up reviews. A closed existing issue is replaced by a
-// new one. Returns a short status for logging and command output.
+// handleIssues tracks findings left on an approved PR: those won't be fixed in
+// the PR, so they become an issue. Reviews with other verdicts are handled in
+// the PR itself and never open issues. One issue per PR: later approved reviews
+// comment on it, and a closed issue is replaced by a new one. Returns a short
+// status for logging and command output.
 func handleIssues(store *state.Store, gh GitHubActions, repo config.RepoConfig, pr github.PullRequest, review *reviewer.StructuredReview) string {
-	if !repo.Issues.Enabled || review == nil {
+	if !repo.Issues.Enabled || review == nil || review.Verdict != reviewer.VerdictApprove {
 		return ""
 	}
 
@@ -117,6 +125,14 @@ func handleIssues(store *state.Store, gh GitHubActions, repo config.RepoConfig, 
 		return "Failed: state lookup"
 	}
 
+	if found && existing.IsClaim() {
+		if time.Since(existing.CreatedAt) < issueClaimTTL {
+			slog.Info("issue creation in progress elsewhere, skipping", "repo", repo.Name, "pr", pr.Number)
+			return "Skipped (issue creation in progress)"
+		}
+		found = false // stale claim; ClaimIssue below takes it over
+	}
+
 	live := repo.Mode == config.ModeLive
 
 	if found && live {
@@ -126,6 +142,10 @@ func handleIssues(store *state.Store, gh GitHubActions, repo config.RepoConfig, 
 			slog.Warn("could not check issue state, commenting", "repo", repo.Name, "issue", issueLabel(existing), "error", err)
 		} else if issueState == "CLOSED" {
 			slog.Info("existing issue closed, opening a new one", "repo", repo.Name, "pr", pr.Number, "issue", issueLabel(existing))
+			if err := store.DeleteIssue(repo.Name, pr.Number); err != nil {
+				slog.Error("failed to clear closed issue record", "repo", repo.Name, "pr", pr.Number, "error", err)
+				return "Failed: state record"
+			}
 			found = false
 		}
 	}
@@ -149,14 +169,28 @@ func handleIssues(store *state.Store, gh GitHubActions, repo config.RepoConfig, 
 		return "Would create issue"
 	}
 
+	// Reserve the row first so a concurrent process can't create a second issue.
+	claimed, err := store.ClaimIssue(repo.Name, pr.Number, issueClaimTTL)
+	if err != nil {
+		slog.Error("failed to claim issue", "repo", repo.Name, "pr", pr.Number, "error", err)
+		return "Failed: state claim"
+	}
+	if !claimed {
+		slog.Info("issue claimed elsewhere, skipping", "repo", repo.Name, "pr", pr.Number)
+		return "Skipped (issue creation in progress)"
+	}
+
 	number, url, err := gh.CreateIssue(repo.Name, buildIssueTitle(pr), buildIssueBody(pr, findings, false), repo.Issues.Labels)
 	if err != nil && url == "" {
 		slog.Warn("failed to create issue", "repo", repo.Name, "pr", pr.Number, "error", err)
+		if relErr := store.ReleaseIssueClaim(repo.Name, pr.Number); relErr != nil {
+			slog.Error("failed to release issue claim", "repo", repo.Name, "pr", pr.Number, "error", relErr)
+		}
 		return fmt.Sprintf("Failed: %s", err)
 	}
 	if err != nil {
 		// Created, but the number couldn't be parsed. Record the URL anyway so
-		// follow-ups comment on it instead of opening duplicates.
+		// later reviews comment on it instead of opening duplicates.
 		slog.Warn("issue created but number unknown", "repo", repo.Name, "pr", pr.Number, "url", url, "error", err)
 	}
 
@@ -170,7 +204,7 @@ func handleIssues(store *state.Store, gh GitHubActions, repo config.RepoConfig, 
 	if err := retry.Do(3, 500*time.Millisecond, "record issue", func() error {
 		return store.RecordIssue(rec)
 	}); err != nil {
-		slog.Error("issue created but not recorded, a follow-up may open a duplicate", "repo", repo.Name, "pr", pr.Number, "url", url, "error", err)
+		slog.Error("issue created but not recorded, a later review may open a duplicate", "repo", repo.Name, "pr", pr.Number, "url", url, "error", err)
 		return fmt.Sprintf("Created %s (Failed: state record)", issueLabel(rec))
 	}
 	slog.Info("issue created", "repo", repo.Name, "pr", pr.Number, "issue", issueLabel(rec), "url", url)

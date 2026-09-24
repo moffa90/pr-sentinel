@@ -146,7 +146,7 @@ func TestBuildFollowUpPrompt(t *testing.T) {
 		{"previous review", "Missing error handling"},
 		{"new commit count", "2 new commit"},
 		{"gh pr diff command", "gh pr diff"},
-		{"addresses instruction", "whether the new commits address"},
+		{"addresses instruction", "whether the current changes address"},
 	}
 
 	for _, c := range checks {
@@ -354,5 +354,32 @@ func TestParseCLIOutput_Models(t *testing.T) {
 	noUsage, _ := ParseCLIOutput(`{"type":"result","structured_output":{"verdict":"approve","summary":"ok","findings":[]}}`)
 	if len(noUsage.Models) != 0 {
 		t.Errorf("Models without modelUsage = %v, want empty", noUsage.Models)
+	}
+}
+
+func TestNeutralizeMentions(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"ping @bob now", "ping @\u200bbob now"},
+		{"see #12", "see #\u200b12"},
+		{"@alice at start", "@\u200balice at start"},
+		{"email a@b.com stays", "email a@b.com stays"},
+		{"url https://x.io/a#frag stays", "url https://x.io/a#frag stays"},
+		{"owner/repo#3", "owner/repo#3"},
+		{"no mentions", "no mentions"},
+	}
+	for _, tt := range tests {
+		if got := NeutralizeMentions(tt.in); got != tt.want {
+			t.Errorf("NeutralizeMentions(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestBuildFollowUpPrompt_ManualRereview(t *testing.T) {
+	prompt := BuildFollowUpPrompt(FollowUpParams{Repo: "o/r", PRNumber: 1, PreviousReview: "prev"})
+	if !strings.Contains(prompt, "manual re-review requested") {
+		t.Errorf("prompt missing manual re-review note:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "has pushed new commits") {
+		t.Errorf("manual prompt should not claim new commits:\n%s", prompt)
 	}
 }

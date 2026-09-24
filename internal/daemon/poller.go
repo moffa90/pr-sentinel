@@ -26,6 +26,8 @@ type PollOptions struct {
 	DisclosureText     string
 	AIDisclosure       bool
 	Model              reviewer.ModelOptions
+	// SkipDailyCount keeps manual reviews from using up the daemon's daily budget.
+	SkipDailyCount bool
 }
 
 // PollResult summarises the outcome of a single poll cycle.

@@ -3,9 +3,20 @@ package reviewer
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// mentionRe matches @user mentions and #123 references that GitHub would
+// turn into notifications or cross-links.
+var mentionRe = regexp.MustCompile(`(^|[^\w/])([@#])([\w-])`)
+
+// NeutralizeMentions inserts a zero-width space after @ and # so text from
+// Claude can't ping users or cross-link unrelated issues when posted to GitHub.
+func NeutralizeMentions(s string) string {
+	return mentionRe.ReplaceAllString(s, "${1}${2}\u200b${3}")
+}
 
 // Verdict represents the review decision.
 type Verdict string
@@ -198,7 +209,7 @@ func (r *StructuredReview) FormatMarkdown() string {
 			location = fmt.Sprintf("%s:%d", f.File, f.Line)
 		}
 
-		fmt.Fprintf(&b, "%s **%s** `%s`\n%s\n\n", icon, f.Severity, location, f.Message)
+		fmt.Fprintf(&b, "%s **%s** `%s`\n%s\n\n", icon, f.Severity, location, NeutralizeMentions(f.Message))
 	}
 
 	return b.String()

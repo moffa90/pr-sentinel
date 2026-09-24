@@ -424,3 +424,48 @@ func (s *Store) GetIssue(repo string, prNumber int64) (IssueRecord, bool, error)
 	}
 	return r, true, nil
 }
+
+// IsClaim reports whether the record is a placeholder reserved by ClaimIssue
+// whose GitHub issue has not been created yet.
+func (r IssueRecord) IsClaim() bool {
+	return r.IssueNumber == 0 && r.IssueURL == ""
+}
+
+// ClaimIssue reserves the created_issues row for a PR before its GitHub issue
+// is created, so the daemon and the review command can't both create one.
+// Returns false when an issue already exists or another process holds a claim
+// younger than staleAfter. A stale claim (e.g. from a crashed process) is taken over.
+func (s *Store) ClaimIssue(repo string, prNumber int64, staleAfter time.Duration) (bool, error) {
+	now := time.Now().UTC()
+	res, err := s.db.Exec(
+		`INSERT INTO created_issues (repo, pr_number, issue_number, issue_url, created_at)
+		 VALUES (?, ?, 0, '', ?)
+		 ON CONFLICT(repo, pr_number) DO UPDATE SET created_at = excluded.created_at
+		 WHERE created_issues.issue_number = 0 AND created_issues.issue_url = '' AND created_issues.created_at < ?`,
+		repo, prNumber, now.Format(time.RFC3339), now.Add(-staleAfter).Format(time.RFC3339),
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// ReleaseIssueClaim removes an unfulfilled claim, e.g. after issue creation failed.
+func (s *Store) ReleaseIssueClaim(repo string, prNumber int64) error {
+	_, err := s.db.Exec(
+		`DELETE FROM created_issues WHERE repo = ? AND pr_number = ? AND issue_number = 0 AND issue_url = ''`,
+		repo, prNumber,
+	)
+	return err
+}
+
+// DeleteIssue removes the issue record for a PR, e.g. when the issue was closed
+// and a new one should be opened.
+func (s *Store) DeleteIssue(repo string, prNumber int64) error {
+	_, err := s.db.Exec(`DELETE FROM created_issues WHERE repo = ? AND pr_number = ?`, repo, prNumber)
+	return err
+}

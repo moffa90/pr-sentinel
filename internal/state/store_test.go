@@ -327,3 +327,53 @@ func TestOpenSetsBusyTimeout(t *testing.T) {
 		t.Errorf("busy_timeout = %d, want %d", timeout, busyTimeoutMS)
 	}
 }
+
+func TestClaimIssue(t *testing.T) {
+	s := newTestStore(t)
+
+	claimed, err := s.ClaimIssue("o/r", 1, time.Minute)
+	if err != nil || !claimed {
+		t.Fatalf("first claim: claimed=%v err=%v", claimed, err)
+	}
+	rec, found, _ := s.GetIssue("o/r", 1)
+	if !found || !rec.IsClaim() {
+		t.Fatalf("claim row = %+v found=%v", rec, found)
+	}
+
+	if claimed, _ := s.ClaimIssue("o/r", 1, time.Minute); claimed {
+		t.Error("second claim while fresh should fail")
+	}
+
+	// A stale claim can be taken over.
+	if claimed, _ := s.ClaimIssue("o/r", 1, -time.Minute); !claimed {
+		t.Error("stale claim should be taken over")
+	}
+
+	// A fulfilled claim can never be claimed again.
+	if err := s.RecordIssue(IssueRecord{Repo: "o/r", PRNumber: 1, IssueNumber: 7, IssueURL: "u", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("RecordIssue: %v", err)
+	}
+	if claimed, _ := s.ClaimIssue("o/r", 1, -time.Minute); claimed {
+		t.Error("claim over a real issue should fail")
+	}
+	if err := s.ReleaseIssueClaim("o/r", 1); err != nil {
+		t.Fatalf("ReleaseIssueClaim: %v", err)
+	}
+	if _, found, _ := s.GetIssue("o/r", 1); !found {
+		t.Error("ReleaseIssueClaim must not delete a real issue")
+	}
+
+	if err := s.DeleteIssue("o/r", 1); err != nil {
+		t.Fatalf("DeleteIssue: %v", err)
+	}
+	if _, found, _ := s.GetIssue("o/r", 1); found {
+		t.Error("DeleteIssue should remove the record")
+	}
+
+	// Release removes an unfulfilled claim.
+	s.ClaimIssue("o/r", 2, time.Minute)
+	s.ReleaseIssueClaim("o/r", 2)
+	if _, found, _ := s.GetIssue("o/r", 2); found {
+		t.Error("released claim should be gone")
+	}
+}

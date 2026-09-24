@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
 	"github.com/moffa90/pr-sentinel/internal/github"
@@ -104,22 +105,27 @@ func TestBuildIssueBody(t *testing.T) {
 	}
 
 	body := buildIssueBody(pr, findings, false)
-	for _, want := range []string{"#7", "@alice", "- [ ] **HIGH** `main.go:12` — nil deref", "`util.go` — leak"} {
+	for _, want := range []string{"#7 (by @alice) was approved with 2 finding(s)", "- [ ] **HIGH** `main.go:12` — nil deref", "`util.go` — leak"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q:\n%s", want, body)
 		}
 	}
 
-	followUp := buildIssueBody(pr, findings, true)
-	if !strings.Contains(followUp, "Follow-up review of #7") {
-		t.Errorf("follow-up body missing header:\n%s", followUp)
+	later := buildIssueBody(pr, findings, true)
+	if !strings.Contains(later, "A later approved review of #7") {
+		t.Errorf("later body missing header:\n%s", later)
+	}
+
+	pinging := buildIssueBody(pr, []reviewer.Finding{{Severity: "LOW", File: "a.go", Message: "ask @bob, see #12"}}, false)
+	if strings.Contains(pinging, "@bob") || strings.Contains(pinging, "#12") {
+		t.Errorf("finding text should not ping or cross-link:\n%s", pinging)
 	}
 }
 
 func TestHandleIssues(t *testing.T) {
 	pr := github.PullRequest{Number: 5, Title: "t", Author: "bob"}
-	high := &reviewer.StructuredReview{Findings: []reviewer.Finding{{Severity: "HIGH", File: "x.go", Message: "bad"}}}
-	lowOnly := &reviewer.StructuredReview{Findings: []reviewer.Finding{{Severity: "LOW", File: "x.go", Message: "nit"}}}
+	high := &reviewer.StructuredReview{Verdict: reviewer.VerdictApprove, Findings: []reviewer.Finding{{Severity: "HIGH", File: "x.go", Message: "bad"}}}
+	lowOnly := &reviewer.StructuredReview{Verdict: reviewer.VerdictApprove, Findings: []reviewer.Finding{{Severity: "LOW", File: "x.go", Message: "nit"}}}
 	liveRepo := config.RepoConfig{Name: "o/r", Mode: config.ModeLive, Issues: config.IssuesConfig{Enabled: true, Labels: []string{"pr-sentinel"}}}
 
 	t.Run("disabled does nothing", func(t *testing.T) {
@@ -135,6 +141,41 @@ func TestHandleIssues(t *testing.T) {
 		store, gh := testStore(t), &mockGitHub{}
 		if got := handleIssues(store, gh, liveRepo, pr, nil); got != "" {
 			t.Errorf("status=%q", got)
+		}
+	})
+
+	for _, verdict := range []reviewer.Verdict{reviewer.VerdictComment, reviewer.VerdictRequestChanges} {
+		t.Run("verdict "+string(verdict)+" does nothing", func(t *testing.T) {
+			store, gh := testStore(t), &mockGitHub{}
+			review := &reviewer.StructuredReview{Verdict: verdict, Findings: high.Findings}
+			if got := handleIssues(store, gh, liveRepo, pr, review); got != "" || gh.created != 0 {
+				t.Errorf("status=%q created=%d", got, gh.created)
+			}
+		})
+	}
+
+	t.Run("fresh claim elsewhere skips", func(t *testing.T) {
+		store, gh := testStore(t), &mockGitHub{}
+		if claimed, _ := store.ClaimIssue("o/r", 5, time.Hour); !claimed {
+			t.Fatal("setup claim failed")
+		}
+		if got := handleIssues(store, gh, liveRepo, pr, high); got != "Skipped (issue creation in progress)" {
+			t.Errorf("status = %q", got)
+		}
+		if gh.created != 0 {
+			t.Errorf("created=%d, want 0", gh.created)
+		}
+	})
+
+	t.Run("create failure releases claim", func(t *testing.T) {
+		store, gh := testStore(t), &mockGitHub{createErr: errors.New("boom")}
+		handleIssues(store, gh, liveRepo, pr, high)
+		if _, found, _ := store.GetIssue("o/r", 5); found {
+			t.Error("claim should be released after failed create")
+		}
+		gh.createErr = nil
+		if got := handleIssues(store, gh, liveRepo, pr, high); got != "Created #100" {
+			t.Errorf("retry status = %q", got)
 		}
 	})
 

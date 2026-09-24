@@ -92,17 +92,40 @@ func runReview(cmd *cobra.Command, args []string) error {
 		fmt.Println(ui.MutedStyle.Render("  Note: PR is a draft (the daemon skips drafts)."))
 	}
 
-	prompt := reviewer.BuildReviewPrompt(reviewer.ReviewParams{
-		Repo:     repo,
-		PRNumber: pr.Number,
-		PRTitle:  pr.Title,
-		PRAuthor: pr.Author,
-		Files:    pr.Files,
-		Adds:     pr.Additions,
-		Dels:     pr.Deletions,
-	})
+	store, err := state.Open(state.DefaultDBPath())
+	if err != nil {
+		return fmt.Errorf("opening state store: %w", err)
+	}
+	defer store.Close()
+
+	// Previously reviewed PRs get the daemon's follow-up prompt with the prior review.
+	var prompt string
+	if prev, prevErr := store.GetReview(repo, pr.Number); prevErr == nil {
+		fmt.Printf("%s Previously reviewed %s, running follow-up review\n", ui.IconDot, prev.ReviewedAt.Local().Format("2006-01-02 15:04"))
+		prompt = reviewer.BuildFollowUpPrompt(reviewer.FollowUpParams{
+			Repo:           repo,
+			PRNumber:       pr.Number,
+			PRTitle:        pr.Title,
+			PRAuthor:       pr.Author,
+			Files:          pr.Files,
+			Adds:           pr.Additions,
+			Dels:           pr.Deletions,
+			PreviousReview: prev.ReviewOutput,
+		})
+	} else {
+		prompt = reviewer.BuildReviewPrompt(reviewer.ReviewParams{
+			Repo:     repo,
+			PRNumber: pr.Number,
+			PRTitle:  pr.Title,
+			PRAuthor: pr.Author,
+			Files:    pr.Files,
+			Adds:     pr.Additions,
+			Dels:     pr.Deletions,
+		})
+	}
 
 	opts := daemon.PollOptionsFromConfig(cfg)
+	opts.SkipDailyCount = true
 	if opts.ReviewTimeout == 0 {
 		opts.ReviewTimeout = reviewer.DefaultTimeout
 	}
@@ -136,12 +159,6 @@ func runReview(cmd *cobra.Command, args []string) error {
 		fmt.Println(ui.MutedStyle.Render("Review not posted."))
 		return nil
 	}
-
-	store, err := state.Open(state.DefaultDBPath())
-	if err != nil {
-		return fmt.Errorf("opening state store: %w", err)
-	}
-	defer store.Close()
 
 	repoConf.Mode = mode
 	outcome, err := daemon.ProcessReview(store, daemon.BuildNotifier(cfg), opts, repoConf, pr, result)

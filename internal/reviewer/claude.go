@@ -84,7 +84,11 @@ func BuildFollowUpPrompt(p FollowUpParams) string {
 	fmt.Fprintf(&b, "Title: %s\n", p.PRTitle)
 	fmt.Fprintf(&b, "Author: @%s\n", p.PRAuthor)
 	fmt.Fprintf(&b, "Stats: %d files changed, %d additions, %d deletions\n", p.Files, p.Adds, p.Dels)
-	fmt.Fprintf(&b, "New activity: %d new commit(s) since last review\n\n", p.NewCommitCount)
+	if p.NewCommitCount > 0 {
+		fmt.Fprintf(&b, "New activity: %d new commit(s) since last review\n\n", p.NewCommitCount)
+	} else {
+		b.WriteString("New activity: manual re-review requested\n\n")
+	}
 
 	b.WriteString("## Previous Review\n\n")
 	b.WriteString(p.PreviousReview)
@@ -92,11 +96,15 @@ func BuildFollowUpPrompt(p FollowUpParams) string {
 
 	b.WriteString("## Instructions\n\n")
 	b.WriteString("This is a follow-up review. A previous review was already posted (shown above).\n")
-	b.WriteString("The PR author has pushed new commits since that review.\n\n")
+	if p.NewCommitCount > 0 {
+		b.WriteString("The PR author has pushed new commits since that review.\n\n")
+	} else {
+		b.WriteString("A re-review was requested manually; there may or may not be new commits since that review.\n\n")
+	}
 	b.WriteString("Your task:\n")
-	b.WriteString("1. Determine whether the new commits address the issues raised in the previous review\n")
+	b.WriteString("1. Determine whether the current changes address the issues raised in the previous review\n")
 	b.WriteString("2. For each previous finding, state whether it was RESOLVED or UNRESOLVED\n")
-	b.WriteString("3. Note any NEW issues introduced by the new commits\n")
+	b.WriteString("3. Note any NEW issues introduced since the previous review\n")
 	b.WriteString("4. If all previous issues are resolved and no new issues found, approve the changes\n\n")
 
 	b.WriteString("Use `gh pr diff " + fmt.Sprintf("%d", p.PRNumber) + " -R " + p.Repo + "` to fetch the diff and review the changes.\n")
