@@ -18,10 +18,10 @@ import (
 
 func NewStartCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "start",
-		Short:         "Start watching repos for new PRs",
-		Long:          "Polls watched repositories for new PRs and runs Claude Code reviews automatically.",
-		RunE:          runStart,
+		Use:          "start",
+		Short:        "Start watching repos for new PRs",
+		Long:         "Polls watched repositories for new PRs and runs Claude Code reviews automatically.",
+		RunE:         runStart,
 		SilenceUsage: true,
 	}
 	cmd.Flags().BoolP("daemon", "d", false, "Run as launchd daemon (detached)")

@@ -233,7 +233,6 @@ func TestBuildTeamsPayload(t *testing.T) {
 	}
 }
 
-
 func TestPayloadsIncludeIssue(t *testing.T) {
 	e := NewEvent("o/r", 1, "t", "alice", "https://github.com/o/r/pull/1", "live", true, "1 LOW", "", "approve", "ok")
 	e.Issue = "Created #7"

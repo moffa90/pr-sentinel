@@ -41,7 +41,7 @@ type graphQLPullRequest struct {
 			Name string `json:"name"`
 		} `json:"nodes"`
 	} `json:"labels"`
-	Author       struct {
+	Author struct {
 		Login string `json:"login"`
 	} `json:"author"`
 	Reviews struct {
