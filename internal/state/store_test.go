@@ -447,3 +447,43 @@ func TestHeadOIDRoundTripAndSet(t *testing.T) {
 		t.Errorf("RecentReviews head = %+v", recent)
 	}
 }
+
+func TestReviewAttempts(t *testing.T) {
+	s := newTestStore(t)
+
+	if _, ok, err := s.GetAttempt("o/r", 1, "h"); ok || err != nil {
+		t.Fatalf("fresh: ok=%v err=%v", ok, err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.BeginAttempt("o/r", 1, "h"); err != nil {
+			t.Fatalf("BeginAttempt: %v", err)
+		}
+	}
+	if err := s.FinishAttempt("o/r", 1, "h", false, "timeout"); err != nil {
+		t.Fatalf("FinishAttempt: %v", err)
+	}
+	a, ok, err := s.GetAttempt("o/r", 1, "h")
+	if err != nil || !ok || a.Attempts != 2 || a.Succeeded || a.LastError != "timeout" {
+		t.Fatalf("after 2 begins + failure: %+v ok=%v err=%v", a, ok, err)
+	}
+	if time.Since(a.LastAttemptAt) > time.Minute {
+		t.Errorf("LastAttemptAt = %s", a.LastAttemptAt)
+	}
+
+	s.FinishAttempt("o/r", 1, "h", true, "ignored")
+	if a, _, _ = s.GetAttempt("o/r", 1, "h"); !a.Succeeded || a.LastError != "" {
+		t.Errorf("after success: %+v", a)
+	}
+
+	// Heads are independent.
+	if _, ok, _ := s.GetAttempt("o/r", 1, "other"); ok {
+		t.Error("other head should have no record")
+	}
+
+	if err := s.PruneAttempts(time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("PruneAttempts: %v", err)
+	}
+	if _, ok, _ := s.GetAttempt("o/r", 1, "h"); ok {
+		t.Error("pruned record still present")
+	}
+}

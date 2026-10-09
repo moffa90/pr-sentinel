@@ -179,23 +179,17 @@ func TestProcessReviewWith_Live(t *testing.T) {
 	})
 }
 
-func TestProcessReviewWith_SkipDailyCount(t *testing.T) {
+// ProcessReview never counts toward the daily budget: the daemon counts each
+// model run when it starts, so the budget also covers runs that fail.
+func TestProcessReviewWith_DoesNotCountDaily(t *testing.T) {
 	today := time.Now().UTC().Format("2006-01-02")
 	repo := config.RepoConfig{Name: "o/r", Mode: config.ModeLive}
-
-	for _, skip := range []bool{false, true} {
-		store, gh := testStore(t), &mockGitHub{}
-		if _, err := ProcessReviewWith(store, nil, PollOptions{SkipDailyCount: skip}, repo, github.PullRequest{Number: 1}, structuredResult(), gh); err != nil {
-			t.Fatalf("ProcessReviewWith: %v", err)
-		}
-		count, _ := store.GetDailyCount(today)
-		want := 1
-		if skip {
-			want = 0
-		}
-		if count != want {
-			t.Errorf("SkipDailyCount=%v: daily count = %d, want %d", skip, count, want)
-		}
+	store, gh := testStore(t), &mockGitHub{}
+	if _, err := ProcessReviewWith(store, nil, PollOptions{}, repo, github.PullRequest{Number: 1}, structuredResult(), gh); err != nil {
+		t.Fatalf("ProcessReviewWith: %v", err)
+	}
+	if count, _ := store.GetDailyCount(today); count != 0 {
+		t.Errorf("daily count = %d, want 0", count)
 	}
 }
 

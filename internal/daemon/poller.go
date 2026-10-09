@@ -28,7 +28,12 @@ type PollOptions struct {
 	DisclosureText     string
 	AIDisclosure       bool
 	Model              reviewer.ModelOptions
-	// SkipDailyCount keeps manual reviews from using up the daemon's daily budget.
+	// SkipDailyCount is kept for compatibility and has no effect: the daemon
+	// now counts each model run when it starts (failed runs cost money too),
+	// and ProcessReview no longer counts, so manual reviews never did use the
+	// daemon's budget.
+	//
+	// Deprecated: no longer read.
 	SkipDailyCount bool
 }
 
@@ -115,6 +120,10 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 	var result PollResult
 	cycleCount := 0
 
+	if err := store.PruneAttempts(time.Now().Add(-attemptRetention)); err != nil {
+		slog.Warn("failed to prune old review attempts", "error", err)
+	}
+
 	// Phase 1: Collect work items
 	var work []reviewWork
 	for _, repo := range cfg.Repos {
@@ -178,6 +187,18 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 					}
 				}
 				slog.Debug("no new work, skipping", "repo", repo.Name, "pr", pr.Number, "reason", plan.reason)
+				result.Skipped++
+				continue
+			}
+
+			attempt, tried, err := store.GetAttempt(repo.Name, pr.Number, pr.HeadOID)
+			if err != nil {
+				slog.Error("failed to read review attempts", "repo", repo.Name, "pr", pr.Number, "error", err)
+				result.Errors++
+				continue
+			}
+			if ok, why := attemptGate(attempt, tried, time.Now()); !ok {
+				slog.Debug("not retrying this head yet", "repo", repo.Name, "pr", pr.Number, "head", pr.HeadOID, "reason", why)
 				result.Skipped++
 				continue
 			}
@@ -277,6 +298,15 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 			}
 			defer func() { <-sem }() // release
 
+			// Record the attempt and count it against the daily budget before
+			// the model runs: a timeout or crash costs money too.
+			if err := store.BeginAttempt(w.repo.Name, w.pr.Number, w.pr.HeadOID); err != nil {
+				slog.Error("failed to record review attempt", "repo", w.repo.Name, "pr", w.pr.Number, "error", err)
+			}
+			if err := store.IncrementDailyCount(time.Now().UTC().Format("2006-01-02")); err != nil {
+				slog.Error("failed to increment daily count", "error", err)
+			}
+
 			slog.Info("reviewing PR", "repo", w.repo.Name, "pr", w.pr.Number, "title", w.pr.Title)
 			slog.Debug("starting review subprocess", "repo", w.repo.Name, "pr", w.pr.Number, "repoPath", w.repoPath)
 			rr := reviewer.RunReviewWithModel(ctx, w.repoPath, w.prompt, opts.ReviewInstructions, w.repo.ReviewInstructions, opts.ReviewTimeout, opts.Model)
@@ -302,6 +332,7 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 	for o := range outcomes {
 		if o.result.Error != nil {
 			slog.Error("review failed", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", o.result.Error)
+			finishAttempt(store, o.work, o.result.Error)
 			result.Errors++
 			continue
 		}
@@ -309,9 +340,11 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 		po, err := ProcessReview(store, notify, opts, o.work.repo, o.work.pr, o.result)
 		if err != nil {
 			slog.Error("failed to publish review", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
+			finishAttempt(store, o.work, err)
 			result.Errors++
 			continue
 		}
+		finishAttempt(store, o.work, nil)
 		if po.Posted {
 			result.Posted++
 		} else {
@@ -489,4 +522,23 @@ func BuildNotifier(cfg config.Config) *notifier.Dispatcher {
 	}
 
 	return notifier.NewDispatcher(notifiers...)
+}
+
+// finishAttempt records a run's outcome, warning once when a head is parked.
+func finishAttempt(store *state.Store, w reviewWork, runErr error) {
+	errMsg := ""
+	if runErr != nil {
+		errMsg = runErr.Error()
+	}
+	if err := store.FinishAttempt(w.repo.Name, w.pr.Number, w.pr.HeadOID, runErr == nil, errMsg); err != nil {
+		slog.Error("failed to record review attempt outcome", "repo", w.repo.Name, "pr", w.pr.Number, "error", err)
+		return
+	}
+	if runErr == nil {
+		return
+	}
+	if a, ok, _ := store.GetAttempt(w.repo.Name, w.pr.Number, w.pr.HeadOID); ok && a.Attempts >= maxAttemptsPerHead {
+		slog.Warn("review parked: no more attempts at this head until the PR changes",
+			"repo", w.repo.Name, "pr", w.pr.Number, "head", w.pr.HeadOID, "attempts", a.Attempts, "last_error", errMsg)
+	}
 }

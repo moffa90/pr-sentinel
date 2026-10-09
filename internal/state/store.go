@@ -136,6 +136,17 @@ CREATE TABLE IF NOT EXISTS daily_counts (
 
 CREATE INDEX IF NOT EXISTS idx_reviewed_prs_repo_pr ON reviewed_prs(repo, pr_number);
 
+CREATE TABLE IF NOT EXISTS review_attempts (
+	repo            TEXT    NOT NULL,
+	pr_number       INTEGER NOT NULL,
+	head_oid        TEXT    NOT NULL,
+	attempts        INTEGER NOT NULL DEFAULT 0,
+	succeeded       INTEGER NOT NULL DEFAULT 0,
+	last_attempt_at TEXT    NOT NULL,
+	last_error      TEXT    NOT NULL DEFAULT '',
+	PRIMARY KEY (repo, pr_number, head_oid)
+);
+
 CREATE TABLE IF NOT EXISTS created_issues (
 	repo         TEXT    NOT NULL,
 	pr_number    INTEGER NOT NULL,
@@ -518,5 +529,74 @@ func migrateAddHeadOIDColumn(db *sql.DB) error {
 // so later cycles compare against it.
 func (s *Store) SetHeadOID(id int64, oid string) error {
 	_, err := s.db.Exec(`UPDATE reviewed_prs SET head_oid = ? WHERE id = ?`, oid, id)
+	return err
+}
+
+// Attempt is the daemon's record of model runs for one PR at one head commit.
+type Attempt struct {
+	Attempts      int
+	Succeeded     bool
+	LastAttemptAt time.Time
+	LastError     string
+}
+
+// GetAttempt returns the attempt record for (repo, pr, head). The bool is
+// false when the daemon has never tried that head.
+func (s *Store) GetAttempt(repo string, prNumber int64, headOID string) (Attempt, bool, error) {
+	var a Attempt
+	var succeeded int
+	var last string
+	err := s.db.QueryRow(
+		`SELECT attempts, succeeded, last_attempt_at, last_error FROM review_attempts
+		 WHERE repo = ? AND pr_number = ? AND head_oid = ?`,
+		repo, prNumber, headOID,
+	).Scan(&a.Attempts, &succeeded, &last, &a.LastError)
+	if err == sql.ErrNoRows {
+		return Attempt{}, false, nil
+	}
+	if err != nil {
+		return Attempt{}, false, err
+	}
+	a.Succeeded = succeeded != 0
+	a.LastAttemptAt, err = time.Parse(time.RFC3339, last)
+	if err != nil {
+		return Attempt{}, false, fmt.Errorf("parsing last_attempt_at %q: %w", last, err)
+	}
+	return a, true, nil
+}
+
+// BeginAttempt records that a model run for (repo, pr, head) is starting. It
+// is written before the run so a crash or timeout still counts.
+func (s *Store) BeginAttempt(repo string, prNumber int64, headOID string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO review_attempts (repo, pr_number, head_oid, attempts, last_attempt_at)
+		 VALUES (?, ?, ?, 1, ?)
+		 ON CONFLICT(repo, pr_number, head_oid) DO UPDATE SET
+		   attempts = attempts + 1,
+		   last_attempt_at = excluded.last_attempt_at`,
+		repo, prNumber, headOID, time.Now().UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+// FinishAttempt records the outcome of the latest attempt. errMsg is ignored
+// on success.
+func (s *Store) FinishAttempt(repo string, prNumber int64, headOID string, success bool, errMsg string) error {
+	succeeded := 0
+	if success {
+		succeeded = 1
+		errMsg = ""
+	}
+	_, err := s.db.Exec(
+		`UPDATE review_attempts SET succeeded = ?, last_error = ?
+		 WHERE repo = ? AND pr_number = ? AND head_oid = ?`,
+		succeeded, errMsg, repo, prNumber, headOID,
+	)
+	return err
+}
+
+// PruneAttempts deletes attempt records last touched before cutoff.
+func (s *Store) PruneAttempts(cutoff time.Time) error {
+	_, err := s.db.Exec(`DELETE FROM review_attempts WHERE last_attempt_at < ?`, cutoff.UTC().Format(time.RFC3339))
 	return err
 }

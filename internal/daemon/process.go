@@ -130,12 +130,6 @@ func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts Pol
 		slog.Error("failed to record review", "repo", repo.Name, "pr", pr.Number, "error", err)
 	}
 
-	if !opts.SkipDailyCount {
-		if err := store.IncrementDailyCount(time.Now().UTC().Format("2006-01-02")); err != nil {
-			slog.Error("failed to increment daily count", "error", err)
-		}
-	}
-
 	evt := notifier.NewEvent(
 		repo.Name, pr.Number, pr.Title, pr.Author, pr.URL,
 		mode, out.Posted, findingsSummary, out.ReviewPath, verdict, summary,
