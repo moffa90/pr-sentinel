@@ -864,8 +864,14 @@ func TestPatchIDOfDiff(t *testing.T) {
 	if err != nil {
 		t.Skipf("git patch-id --verbatim unavailable: %v", err)
 	}
-	indented, _ := PatchIDOfDiff(diff(1, "    c()"))
-	moved, _ := PatchIDOfDiff(diff(40, "c()"))
+	indented, err := PatchIDOfDiff(diff(1, "    c()"))
+	if err != nil {
+		t.Fatalf("indented: %v", err)
+	}
+	moved, err := PatchIDOfDiff(diff(40, "c()"))
+	if err != nil {
+		t.Fatalf("moved: %v", err)
+	}
 	empty, err := PatchIDOfDiff(nil)
 
 	if dedented == "" || dedented == indented {

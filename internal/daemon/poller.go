@@ -236,11 +236,10 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 					result.Skipped++
 					continue
 				case plan.kind == planFollowUp && recPtr != nil && recPtr.HeadOID == plan.prevOID && recPtr.PatchID == patchID:
-					// Only against the stored review the follow-up is measured
-					// from; a newer review from another host has no stored
-					// fingerprint here.
-					// Record the new head as reviewed so later cycles skip it
-					// without fetching the diff again.
+					// Same change as the stored review the follow-up is measured
+					// from (a newer review from another host has no stored
+					// fingerprint to match). Record the new head as reviewed so
+					// later cycles skip it without fetching the diff again.
 					if err := store.SetHeadOID(recPtr.ID, pr.HeadOID); err != nil {
 						slog.Error("failed to record equivalent head", "repo", repo.Name, "pr", pr.Number, "error", err)
 					}
