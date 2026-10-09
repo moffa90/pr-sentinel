@@ -12,19 +12,20 @@ import (
 )
 
 type mockGitHub struct {
-	created    int
-	commented  []string
-	posted     []string // verdicts passed to PostReview
-	merged     int
-	lastBody   string
-	lastLabel  []string
-	issueState string // returned by GetIssueState; "" means OPEN
-	stateErr   error
-	createURL  string // overrides the URL returned by CreateIssue
-	createErr  error
-	err        error // returned by comment/post/merge
-	ensured    []string
-	labelErr   map[string]error // per-label EnsureLabel failures
+	created       int
+	commented     []string
+	posted        []string // verdicts passed to PostReview
+	merged        int
+	lastBody      string
+	lastLabel     []string
+	issueState    string // returned by GetIssueState; "" means OPEN
+	stateErr      error
+	createURL     string // overrides the URL returned by CreateIssue
+	createErr     error
+	rejectLabeled bool  // CreateIssue fails whenever labels are passed
+	err           error // returned by comment/post/merge
+	ensured       []string
+	labelErr      map[string]error // per-label EnsureLabel failures
 }
 
 func (m *mockGitHub) EnsureLabel(_, name string) error {
@@ -55,6 +56,9 @@ func (m *mockGitHub) EnableAutoMerge(string, int64, string, bool) error {
 func (m *mockGitHub) CreateIssue(repo, title, body string, labels []string) (int64, string, error) {
 	if m.createErr != nil {
 		return 0, m.createURL, m.createErr
+	}
+	if m.rejectLabeled && len(labels) > 0 {
+		return 0, "", errors.New("could not add label: 'pr-sentinel' not found")
 	}
 	m.created++
 	m.lastBody = body
@@ -186,6 +190,29 @@ func TestHandleIssues(t *testing.T) {
 		}
 	})
 
+	t.Run("only the failing label is dropped, order kept", func(t *testing.T) {
+		store := testStore(t)
+		gh := &mockGitHub{labelErr: map[string]error{"bad": errors.New("HTTP 403")}}
+		repo := liveRepo
+		repo.Issues.Labels = []string{"first", "bad", "last"}
+		if got := handleIssues(store, gh, repo, pr, high); got != "Created #100" {
+			t.Fatalf("status = %q", got)
+		}
+		if strings.Join(gh.lastLabel, ",") != "first,last" {
+			t.Errorf("issue labels = %v, want [first last]", gh.lastLabel)
+		}
+	})
+
+	t.Run("refused labelled create retries without labels", func(t *testing.T) {
+		store, gh := testStore(t), &mockGitHub{rejectLabeled: true}
+		if got := handleIssues(store, gh, liveRepo, pr, high); got != "Created #100" {
+			t.Fatalf("status = %q", got)
+		}
+		if gh.created != 1 || len(gh.lastLabel) != 0 {
+			t.Errorf("created=%d labels=%v, want 1 issue without labels", gh.created, gh.lastLabel)
+		}
+	})
+
 	t.Run("fresh claim elsewhere skips", func(t *testing.T) {
 		store, gh := testStore(t), &mockGitHub{}
 		if claimed, _ := store.ClaimIssue("o/r", 5, time.Hour); !claimed {
@@ -309,4 +336,27 @@ func TestHandleIssues(t *testing.T) {
 			t.Error("failed create should not record an issue")
 		}
 	})
+}
+
+func TestForgetLabels(t *testing.T) {
+	ensuredLabels.Store("o/r\x00a", struct{}{})
+	ensuredLabels.Store("o/r\x00b", struct{}{})
+	ensuredLabels.Store("x/y\x00a", struct{}{})
+	t.Cleanup(func() {
+		for _, k := range []string{"o/r\x00a", "o/r\x00b", "x/y\x00a"} {
+			ensuredLabels.Delete(k)
+		}
+	})
+
+	forgetLabels("o/r", []string{"a"})
+
+	if _, ok := ensuredLabels.Load("o/r\x00a"); ok {
+		t.Error("o/r a should be forgotten")
+	}
+	if _, ok := ensuredLabels.Load("o/r\x00b"); !ok {
+		t.Error("o/r b should be kept")
+	}
+	if _, ok := ensuredLabels.Load("x/y\x00a"); !ok {
+		t.Error("other repo's label should be kept")
+	}
 }

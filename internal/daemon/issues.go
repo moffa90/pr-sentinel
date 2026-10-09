@@ -66,6 +66,14 @@ func (GitHubCLI) EnsureLabel(repo, name string) error {
 	return nil
 }
 
+// forgetLabels drops cached labels for a repo, e.g. after gh refused an issue
+// that carried them because one was deleted since it was cached.
+func forgetLabels(repo string, labels []string) {
+	for _, l := range labels {
+		ensuredLabels.Delete(repo + "\x00" + l)
+	}
+}
+
 // usableLabels ensures each configured label exists and returns the ones that
 // do. A label that can't be created is dropped with a warning rather than
 // failing the issue: gh refuses `issue create` outright on a missing label.
@@ -213,8 +221,17 @@ func handleIssues(store *state.Store, gh GitHubActions, repo config.RepoConfig, 
 		return "Skipped (issue creation in progress)"
 	}
 
+	title, body := buildIssueTitle(pr), buildIssueBody(pr, findings, false)
 	labels := usableLabels(gh, repo.Name, repo.Issues.Labels)
-	number, url, err := gh.CreateIssue(repo.Name, buildIssueTitle(pr), buildIssueBody(pr, findings, false), labels)
+	number, url, err := gh.CreateIssue(repo.Name, title, body, labels)
+	if err != nil && url == "" && len(labels) > 0 {
+		// A cached label may have been deleted since; gh refuses the whole
+		// issue then. Forget the cache so the next issue re-creates the label,
+		// and retry this one without labels rather than lose it.
+		slog.Warn("issue create failed with labels, retrying without", "repo", repo.Name, "pr", pr.Number, "labels", labels, "error", err)
+		forgetLabels(repo.Name, labels)
+		number, url, err = gh.CreateIssue(repo.Name, title, body, nil)
+	}
 	if err != nil && url == "" {
 		slog.Warn("failed to create issue", "repo", repo.Name, "pr", pr.Number, "error", err)
 		if relErr := store.ReleaseIssueClaim(repo.Name, pr.Number); relErr != nil {
