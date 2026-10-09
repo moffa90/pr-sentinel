@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/moffa90/pr-sentinel/internal/config"
@@ -23,6 +24,7 @@ type GitHubActions interface {
 	CreateIssue(repo, title, body string, labels []string) (int64, string, error)
 	CommentOnIssue(repo, ref, body string) error
 	GetIssueState(repo, ref string) (string, error)
+	EnsureLabel(repo, name string) error
 }
 
 // GitHubCLI is the production GitHubActions implementation backed by the gh CLI.
@@ -46,6 +48,37 @@ func (GitHubCLI) CommentOnIssue(repo, ref, body string) error {
 
 func (GitHubCLI) GetIssueState(repo, ref string) (string, error) {
 	return github.GetIssueState(repo, ref)
+}
+
+// ensuredLabels caches repo/label pairs already confirmed to exist, so the
+// daemon calls `gh label create` once per label per process, not per issue.
+var ensuredLabels sync.Map
+
+func (GitHubCLI) EnsureLabel(repo, name string) error {
+	key := repo + "\x00" + name
+	if _, ok := ensuredLabels.Load(key); ok {
+		return nil
+	}
+	if err := github.EnsureLabel(repo, name); err != nil {
+		return err
+	}
+	ensuredLabels.Store(key, struct{}{})
+	return nil
+}
+
+// usableLabels ensures each configured label exists and returns the ones that
+// do. A label that can't be created is dropped with a warning rather than
+// failing the issue: gh refuses `issue create` outright on a missing label.
+func usableLabels(gh GitHubActions, repo string, labels []string) []string {
+	var out []string
+	for _, l := range labels {
+		if err := gh.EnsureLabel(repo, l); err != nil {
+			slog.Warn("label unavailable, creating issue without it", "repo", repo, "label", l, "error", err)
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 // issueRef returns the issue number when known, otherwise its URL. gh accepts either.
@@ -180,7 +213,8 @@ func handleIssues(store *state.Store, gh GitHubActions, repo config.RepoConfig, 
 		return "Skipped (issue creation in progress)"
 	}
 
-	number, url, err := gh.CreateIssue(repo.Name, buildIssueTitle(pr), buildIssueBody(pr, findings, false), repo.Issues.Labels)
+	labels := usableLabels(gh, repo.Name, repo.Issues.Labels)
+	number, url, err := gh.CreateIssue(repo.Name, buildIssueTitle(pr), buildIssueBody(pr, findings, false), labels)
 	if err != nil && url == "" {
 		slog.Warn("failed to create issue", "repo", repo.Name, "pr", pr.Number, "error", err)
 		if relErr := store.ReleaseIssueClaim(repo.Name, pr.Number); relErr != nil {

@@ -44,3 +44,20 @@ func TestIssueNumberFromURL(t *testing.T) {
 		})
 	}
 }
+
+func TestIsLabelExistsError(t *testing.T) {
+	tests := []struct {
+		stderr string
+		want   bool
+	}{
+		{"label with name \"pr-sentinel\" already exists; use `--force` to update its color and description", true},
+		{"HTTP 404: Not Found", false},
+		{"HTTP 403: Resource not accessible by integration", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isLabelExistsError(tt.stderr); got != tt.want {
+			t.Errorf("isLabelExistsError(%q) = %v, want %v", tt.stderr, got, tt.want)
+		}
+	}
+}

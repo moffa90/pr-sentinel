@@ -23,6 +23,16 @@ type mockGitHub struct {
 	createURL  string // overrides the URL returned by CreateIssue
 	createErr  error
 	err        error // returned by comment/post/merge
+	ensured    []string
+	labelErr   map[string]error // per-label EnsureLabel failures
+}
+
+func (m *mockGitHub) EnsureLabel(_, name string) error {
+	if err := m.labelErr[name]; err != nil {
+		return err
+	}
+	m.ensured = append(m.ensured, name)
+	return nil
 }
 
 func (m *mockGitHub) PostReview(_ string, _ int64, body, verdict string) error {
@@ -153,6 +163,28 @@ func TestHandleIssues(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("labels are ensured before creating", func(t *testing.T) {
+		store, gh := testStore(t), &mockGitHub{}
+		handleIssues(store, gh, liveRepo, pr, high)
+		if len(gh.ensured) != 1 || gh.ensured[0] != "pr-sentinel" {
+			t.Errorf("ensured = %v, want [pr-sentinel]", gh.ensured)
+		}
+		if len(gh.lastLabel) != 1 || gh.lastLabel[0] != "pr-sentinel" {
+			t.Errorf("issue labels = %v, want [pr-sentinel]", gh.lastLabel)
+		}
+	})
+
+	t.Run("label that can't be created is dropped, issue still created", func(t *testing.T) {
+		store := testStore(t)
+		gh := &mockGitHub{labelErr: map[string]error{"pr-sentinel": errors.New("HTTP 403")}}
+		if got := handleIssues(store, gh, liveRepo, pr, high); got != "Created #100" {
+			t.Fatalf("status = %q", got)
+		}
+		if len(gh.lastLabel) != 0 {
+			t.Errorf("issue labels = %v, want none", gh.lastLabel)
+		}
+	})
 
 	t.Run("fresh claim elsewhere skips", func(t *testing.T) {
 		store, gh := testStore(t), &mockGitHub{}

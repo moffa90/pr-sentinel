@@ -210,3 +210,26 @@ func TestAutoMergeGates_CaseInsensitive(t *testing.T) {
 		t.Errorf("merged=%d, want 0", gh.merged)
 	}
 }
+
+func TestAutoMergeGate_EnsuresRequiredLabel(t *testing.T) {
+	repo := config.RepoConfig{Name: "o/r", Mode: config.ModeLive, AutoMerge: config.AutoMergeConfig{Enabled: true, Strategy: "squash", RequireLabel: "auto-merge"}}
+
+	gh := &mockGitHub{}
+	if got := autoMerge(gh, repo, github.PullRequest{Number: 1}, nil); !strings.HasPrefix(got, "Skipped (missing label") {
+		t.Fatalf("got %q", got)
+	}
+	if len(gh.ensured) != 1 || gh.ensured[0] != "auto-merge" {
+		t.Errorf("ensured = %v, want [auto-merge]", gh.ensured)
+	}
+	if gh.merged != 0 {
+		t.Errorf("merged = %d, want 0", gh.merged)
+	}
+
+	dry := repo
+	dry.Mode = config.ModeDryRun
+	gh = &mockGitHub{}
+	autoMerge(gh, dry, github.PullRequest{Number: 1}, nil)
+	if len(gh.ensured) != 0 {
+		t.Errorf("dry-run must not create labels, ensured = %v", gh.ensured)
+	}
+}
