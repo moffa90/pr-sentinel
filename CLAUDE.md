@@ -13,6 +13,8 @@ go test ./internal/github/ -run TestParseFoo -v   # single test
 
 No Makefile, no linter configured. Standard Go toolchain only.
 
+`scripts/patch-config.py` is a one-off Python 3.9+ migration for one specific live config (it names `Cellgain/dms-gateway` and `moffa90/pr-sentinel`), not a general tool. It checks every edit's match count before writing, is a no-op on re-run (including after `config.Save` rewrites its flow-style lists and quotes in yaml.v3's style), backs up to `config.yaml.bak-<timestamp>` at 0600 and writes atomically.
+
 ## Architecture
 
 pr-sentinel is a CLI daemon that polls GitHub for open PRs and reviews them using Claude Code (`claude -p`) running inside each repo directory. This preserves the repo's `.claude/` context (CLAUDE.md, memory, skills).
