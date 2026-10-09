@@ -78,8 +78,8 @@ Each model run costs money whether or not it succeeds, so the daemon budgets run
 - **Every run counts** toward `max_reviews_per_day`, recorded when it starts (phase 2), before the model runs. `ProcessReview` no longer counts; `PollOptions.SkipDailyCount` is deprecated and ignored. Manual `review` runs don't count against the daemon's budget.
 - **Every run is recorded** in `review_attempts` per (repo, PR, head commit) before it starts, and its outcome after (`succeeded`, `last_error`).
 - **`attemptGate`** in phase 1, after the follow-up decision: a head whose review was posted is never run again by the daemon (even if recording the review failed); a failed head backs off 10m, then 20m, measured from when the run failed; after `maxAttemptsPerHead` (3) failures it is **parked** with one warning, until the PR's head moves. A new head starts clean.
-- A run interrupted by daemon shutdown stays counted in the daily budget but is reverted from the attempt count (`RevertAttempt`), so restarts can't park a PR.
-- Pruning (each cycle) drops records idle for 30 days that protect nothing (failures below the park limit, or any record for a PR seen closed). Succeeded and parked records on open PRs are kept; everything goes after 180 days.
+- A run interrupted by daemon shutdown (the reviewer's error wraps `context.Canceled`) stays counted in the daily budget but is reverted from the attempt count (`settleAttempt` → `RevertAttempt`), so restarts can't park a PR.
+- Pruning (each cycle) drops records idle for 30 days that protect nothing (failures below the park limit, or any record for a PR seen closed). Succeeded and parked records on open PRs are kept; everything goes after 180 days. "Closed" comes from `reviewed_prs.closed_at`, so a PR parked before any review was recorded keeps its record until the 180-day cutoff, and a closed-then-reopened PR keeps its old `closed_at` (its records can go after 30 idle days). Both are rare and bounded.
 
 ### Follow-up detection
 

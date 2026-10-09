@@ -333,16 +333,7 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 	for o := range outcomes {
 		if o.result.Error != nil {
 			slog.Error("review failed", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", o.result.Error)
-			if ctx.Err() != nil {
-				// Interrupted by shutdown, not a property of the PR: the run
-				// stays counted in the daily budget but doesn't move the head
-				// toward being parked.
-				if err := store.RevertAttempt(o.work.repo.Name, o.work.pr.Number, o.work.pr.HeadOID); err != nil {
-					slog.Error("failed to revert interrupted attempt", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
-				}
-			} else {
-				finishAttempt(store, o.work, o.result.Error)
-			}
+			settleAttempt(store, o.work, o.result.Error)
 			result.Errors++
 			continue
 		}
@@ -532,6 +523,20 @@ func BuildNotifier(cfg config.Config) *notifier.Dispatcher {
 	}
 
 	return notifier.NewDispatcher(notifiers...)
+}
+
+// settleAttempt records a run that failed. A run cancelled by daemon shutdown
+// (the reviewer wraps context.Canceled) says nothing about the PR: it stays
+// counted in the daily budget but is reverted from the attempt count, so
+// restarts can't park a PR. Any other failure counts toward parking.
+func settleAttempt(store *state.Store, w reviewWork, runErr error) {
+	if errors.Is(runErr, context.Canceled) {
+		if err := store.RevertAttempt(w.repo.Name, w.pr.Number, w.pr.HeadOID); err != nil {
+			slog.Error("failed to revert interrupted attempt", "repo", w.repo.Name, "pr", w.pr.Number, "error", err)
+		}
+		return
+	}
+	finishAttempt(store, w, runErr)
 }
 
 // finishAttempt records a run's outcome, warning once when a head is parked.

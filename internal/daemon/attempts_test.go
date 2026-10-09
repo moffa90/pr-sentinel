@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -101,5 +103,37 @@ func TestRunPollCycleWith_SucceededHeadNotRetried(t *testing.T) {
 	}}
 	if r := RunPollCycleWith(context.Background(), cfg, store, nil, fetcher); r.Errors != 0 || r.Skipped != 1 {
 		t.Errorf("errors=%d skipped=%d, want 0/1", r.Errors, r.Skipped)
+	}
+}
+
+// A run cut short by shutdown stays in the daily budget but doesn't count
+// toward parking; a real failure does.
+func TestSettleAttempt(t *testing.T) {
+	store := testStore(t)
+	w := reviewWork{repo: config.RepoConfig{Name: "o/r"}, pr: github.PullRequest{Number: 9, HeadOID: "h"}}
+	today := time.Now().UTC().Format("2006-01-02")
+	begin := func() {
+		t.Helper()
+		if err := store.BeginAttempt("o/r", 9, "h"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.IncrementDailyCount(today); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	begin()
+	settleAttempt(store, w, fmt.Errorf("review cancelled: %w", context.Canceled))
+	if _, ok, _ := store.GetAttempt("o/r", 9, "h"); ok {
+		t.Error("an interrupted run should be reverted from the attempt count")
+	}
+	if n, _ := store.GetDailyCount(today); n != 1 {
+		t.Errorf("daily count = %d, want 1 (the interrupted run still cost money)", n)
+	}
+
+	begin()
+	settleAttempt(store, w, errors.New("review timed out"))
+	if a, ok, _ := store.GetAttempt("o/r", 9, "h"); !ok || a.Attempts != 1 || a.LastError == "" {
+		t.Errorf("a real failure should count: %+v ok=%v", a, ok)
 	}
 }
