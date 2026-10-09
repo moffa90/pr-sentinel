@@ -46,8 +46,9 @@ func IsLabelMissingError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "label") && strings.Contains(msg, "not found")
+	// Match gh's exact phrase: the wrapped error also carries the repo name, so
+	// "label" + "not found" would match a 404 on a repo named like acme/label-tool.
+	return strings.Contains(strings.ToLower(err.Error()), "could not add label")
 }
 
 // isLabelExistsError reports whether gh refused because the label exists, e.g.

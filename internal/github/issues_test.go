@@ -72,6 +72,7 @@ func TestIsLabelMissingError(t *testing.T) {
 	}{
 		{errors.New("gh issue create o/r failed: could not add label: 'pr-sentinel' not found: exit status 1"), true},
 		{errors.New("gh issue create o/r failed: HTTP 404: Not Found"), false},
+		{errors.New("gh issue create acme/label-tool failed: HTTP 404: Not Found"), false},
 		{errors.New("gh issue create o/r failed: HTTP 502: Bad Gateway"), false},
 		{nil, false},
 	}
