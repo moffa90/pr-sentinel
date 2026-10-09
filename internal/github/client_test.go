@@ -839,3 +839,72 @@ func TestIsSentinelReview(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePatchID(t *testing.T) {
+	tests := []struct{ out, want string }{
+		{"8d40e6b0db060aef85b13fb00a1ca3ff6d0c8508 0000000000000000000000000000000000000000\n", "8d40e6b0db060aef85b13fb00a1ca3ff6d0c8508"},
+		{"", ""},
+		{"\n", ""},
+	}
+	for _, tt := range tests {
+		if got := parsePatchID(tt.out); got != tt.want {
+			t.Errorf("parsePatchID(%q) = %q, want %q", tt.out, got, tt.want)
+		}
+	}
+}
+
+// Runs the real git: whitespace must count (an indentation change moves code
+// into or out of a block in Python), line numbers must not (a rebase that
+// shifts the hunk is the same change).
+func TestPatchIDOfDiff(t *testing.T) {
+	diff := func(start int, added string) []byte {
+		return []byte(fmt.Sprintf("diff --git a/p.py b/p.py\n--- a/p.py\n+++ b/p.py\n@@ -%d,2 +%d,3 @@\n if a:\n     b()\n+%s\n", start, start, added))
+	}
+	dedented, err := PatchIDOfDiff(diff(1, "c()"))
+	if err != nil {
+		t.Skipf("git patch-id --verbatim unavailable: %v", err)
+	}
+	indented, err := PatchIDOfDiff(diff(1, "    c()"))
+	if err != nil {
+		t.Fatalf("indented: %v", err)
+	}
+	moved, err := PatchIDOfDiff(diff(40, "c()"))
+	if err != nil {
+		t.Fatalf("moved: %v", err)
+	}
+	empty, err := PatchIDOfDiff(nil)
+
+	if dedented == "" || dedented == indented {
+		t.Errorf("indentation-only change must change the fingerprint: %q vs %q", dedented, indented)
+	}
+	if moved != dedented {
+		t.Errorf("same change at another line must keep the fingerprint: %q vs %q", moved, dedented)
+	}
+	if err != nil || empty != "" {
+		t.Errorf("empty diff: %q, %v", empty, err)
+	}
+}
+
+func TestEscapeRef(t *testing.T) {
+	tests := []struct{ ref, want string }{
+		{"main", "main"},
+		{"feature/x", "feature/x"},
+		{"fix#12", "fix%2312"},
+		{"50%?", "50%25%3F"},
+	}
+	for _, tt := range tests {
+		if got := escapeRef(tt.ref); got != tt.want {
+			t.Errorf("escapeRef(%q) = %q, want %q", tt.ref, got, tt.want)
+		}
+	}
+}
+
+func TestBaseRefIsFetched(t *testing.T) {
+	if !strings.Contains(prQuery, "baseRefName") || !strings.Contains(prViewFields, "baseRefName") {
+		t.Error("baseRefName must be fetched by both the poll query and GetPR")
+	}
+	pr, err := parsePRView([]byte(`{"number":1,"baseRefName":"main","headRefOid":"h"}`), "o/r")
+	if err != nil || pr.BaseRef != "main" {
+		t.Errorf("BaseRef = %q, err = %v", pr.BaseRef, err)
+	}
+}

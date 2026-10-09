@@ -25,6 +25,7 @@ type ReviewRecord struct {
 	CostUSD         float64
 	Models          string // comma-separated model IDs the claude CLI reported
 	HeadOID         string // PR head commit the review was written against; "" for reviews before it was recorded
+	PatchID         string // git patch-id of the PR diff at HeadOID; "" when unknown
 	ReviewedAt      time.Time
 }
 
@@ -126,6 +127,7 @@ CREATE TABLE IF NOT EXISTS reviewed_prs (
 	closed_at        TEXT    NOT NULL DEFAULT '',
 	models           TEXT    NOT NULL DEFAULT '',
 	head_oid         TEXT    NOT NULL DEFAULT '',
+	patch_id         TEXT    NOT NULL DEFAULT '',
 	reviewed_at      TEXT    NOT NULL
 );
 
@@ -183,7 +185,12 @@ CREATE TABLE IF NOT EXISTS created_issues (
 	}
 
 	// Add head_oid column if missing
-	return migrateAddHeadOIDColumn(db)
+	if err := migrateAddHeadOIDColumn(db); err != nil {
+		return err
+	}
+
+	// Add patch_id column if missing
+	return migrateAddPatchIDColumn(db)
 }
 
 // migrateDropUnique recreates reviewed_prs without the UNIQUE(repo, pr_number)
@@ -242,8 +249,8 @@ func migrateAddCostColumn(db *sql.DB) error {
 // RecordReview appends a review record. Multiple reviews per PR are preserved.
 func (s *Store) RecordReview(r ReviewRecord) error {
 	const query = `
-INSERT INTO reviewed_prs (repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, models, head_oid, reviewed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+INSERT INTO reviewed_prs (repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, models, head_oid, patch_id, reviewed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	posted := 0
 	if r.Posted {
@@ -253,7 +260,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.Exec(query,
 		r.Repo, r.PRNumber, r.PRTitle, r.PRAuthor,
 		r.ReviewOutput, r.FindingsSummary, r.Mode,
-		posted, r.CostUSD, r.Models, r.HeadOID, r.ReviewedAt.UTC().Format(time.RFC3339),
+		posted, r.CostUSD, r.Models, r.HeadOID, r.PatchID, r.ReviewedAt.UTC().Format(time.RFC3339),
 	)
 	return err
 }
@@ -278,12 +285,12 @@ func (s *Store) GetReview(repo string, prNumber int64) (ReviewRecord, error) {
 	var reviewedAt string
 
 	err := s.db.QueryRow(
-		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, models, head_oid, reviewed_at
+		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, models, head_oid, patch_id, reviewed_at
 		 FROM reviewed_prs WHERE repo = ? AND pr_number = ?
 		 ORDER BY reviewed_at DESC LIMIT 1`,
 		repo, prNumber,
 	).Scan(&r.ID, &r.Repo, &r.PRNumber, &r.PRTitle, &r.PRAuthor,
-		&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &r.Models, &r.HeadOID, &reviewedAt)
+		&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &r.Models, &r.HeadOID, &r.PatchID, &reviewedAt)
 	if err != nil {
 		return ReviewRecord{}, err
 	}
@@ -338,7 +345,7 @@ func (s *Store) DailyCost(date string) (float64, error) {
 // RecentReviews returns the most recent review records ordered by reviewed_at descending.
 func (s *Store) RecentReviews(limit int) ([]ReviewRecord, error) {
 	rows, err := s.db.Query(
-		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, models, head_oid, reviewed_at
+		`SELECT id, repo, pr_number, pr_title, pr_author, review_output, findings_summary, mode, posted, cost_usd, models, head_oid, patch_id, reviewed_at
 		 FROM reviewed_prs ORDER BY reviewed_at DESC LIMIT ?`,
 		limit,
 	)
@@ -354,7 +361,7 @@ func (s *Store) RecentReviews(limit int) ([]ReviewRecord, error) {
 		var reviewedAt string
 
 		if err := rows.Scan(&r.ID, &r.Repo, &r.PRNumber, &r.PRTitle, &r.PRAuthor,
-			&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &r.Models, &r.HeadOID, &reviewedAt); err != nil {
+			&r.ReviewOutput, &r.FindingsSummary, &r.Mode, &posted, &r.CostUSD, &r.Models, &r.HeadOID, &r.PatchID, &reviewedAt); err != nil {
 			return nil, err
 		}
 
@@ -525,8 +532,9 @@ func migrateAddHeadOIDColumn(db *sql.DB) error {
 	return err
 }
 
-// SetHeadOID records the head commit for a review row that predates head_oid,
-// so later cycles compare against it.
+// SetHeadOID sets the head commit a review row counts as covering. Used for a
+// row that predates head_oid (baseline adoption), and to mark a new head whose
+// diff is identical to the reviewed one as reviewed.
 func (s *Store) SetHeadOID(id int64, oid string) error {
 	_, err := s.db.Exec(`UPDATE reviewed_prs SET head_oid = ? WHERE id = ?`, oid, id)
 	return err
@@ -636,5 +644,19 @@ func (s *Store) PruneAttempts(cutoff, hardCutoff time.Time, parkAt int) error {
 		 )`,
 		cutoff.UTC().Format(time.RFC3339), parkAt, hardCutoff.UTC().Format(time.RFC3339),
 	)
+	return err
+}
+
+// migrateAddPatchIDColumn adds the patch_id column to existing databases.
+func migrateAddPatchIDColumn(db *sql.DB) error {
+	var tableSql string
+	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviewed_prs'").Scan(&tableSql)
+	if err != nil {
+		return nil
+	}
+	if strings.Contains(tableSql, "patch_id") {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE reviewed_prs ADD COLUMN patch_id TEXT NOT NULL DEFAULT ''")
 	return err
 }

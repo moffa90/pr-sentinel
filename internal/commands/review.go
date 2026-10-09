@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -90,6 +91,15 @@ func runReview(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s %s by @%s (%d files, +%d/-%d)\n\n", ui.IconDot, pr.Title, pr.Author, pr.Files, pr.Additions, pr.Deletions)
 	if pr.IsDraft {
 		fmt.Println(ui.MutedStyle.Render("  Note: PR is a draft (the daemon skips drafts)."))
+	}
+
+	// Fingerprint the diff so the daemon can recognise this change later.
+	if pr.BaseRef != "" && pr.HeadOID != "" {
+		if id, err := ghclient.DiffPatchID(repo, pr.BaseRef, pr.HeadOID); err != nil {
+			slog.Warn("could not fingerprint diff; the daemon may re-review this change after a rebase", "repo", repo, "pr", pr.Number, "error", err)
+		} else {
+			pr.PatchID = id
+		}
 	}
 
 	store, err := state.Open(state.DefaultDBPath())

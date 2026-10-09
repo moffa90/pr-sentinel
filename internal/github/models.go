@@ -21,6 +21,11 @@ type PullRequest struct {
 	// CommitOIDs lists the PR's commits oldest first (up to the last 100),
 	// used to count commits added since a reviewed OID.
 	CommitOIDs []string
+	// BaseRef is the branch the PR merges into.
+	BaseRef string
+	// PatchID fingerprints the PR's diff at HeadOID (git patch-id --stable).
+	// Set by pr-sentinel before a review, not by GitHub; "" when unknown.
+	PatchID string
 }
 
 // FollowUpCandidate is a PR pr-sentinel has already reviewed whose head has

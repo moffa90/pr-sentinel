@@ -125,6 +125,7 @@ func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts Pol
 		CostUSD:         rr.CostUSD,
 		Models:          strings.Join(rr.Models, ","),
 		HeadOID:         pr.HeadOID,
+		PatchID:         pr.PatchID,
 		ReviewedAt:      time.Now().UTC(),
 	}); err != nil {
 		slog.Error("failed to record review", "repo", repo.Name, "pr", pr.Number, "error", err)
