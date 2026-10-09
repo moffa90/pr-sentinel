@@ -20,6 +20,7 @@ import (
 // post-review flow is testable without the gh CLI.
 type GitHubActions interface {
 	PostReview(repo string, number int64, body, verdict string) error
+	PostReviewAtCommit(repo string, number int64, body, verdict, commitOID string) error
 	EnableAutoMerge(repo string, number int64, strategy string, deleteBranch bool) error
 	CreateIssue(repo, title, body string, labels []string) (int64, string, error)
 	CommentOnIssue(repo, ref, body string) error
@@ -32,6 +33,10 @@ type GitHubCLI struct{}
 
 func (GitHubCLI) PostReview(repo string, number int64, body, verdict string) error {
 	return publisher.PostLiveReview(repo, number, body, verdict)
+}
+
+func (GitHubCLI) PostReviewAtCommit(repo string, number int64, body, verdict, commitOID string) error {
+	return github.PostReviewAtCommit(repo, number, body, verdict, commitOID)
 }
 
 func (GitHubCLI) EnableAutoMerge(repo string, number int64, strategy string, deleteBranch bool) error {

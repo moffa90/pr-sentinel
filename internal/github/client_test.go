@@ -1,6 +1,7 @@
 package github
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -21,15 +22,16 @@ const testGraphQLResponse = `{
             "additions": 100,
             "deletions": 20,
             "author": { "login": "alice" },
+            "headRefOid": "aaa111",
             "reviews": {
               "nodes": [
-                { "author": { "login": "bob" }, "publishedAt": "2026-03-15T12:00:00Z" }
+                { "author": { "login": "bob" }, "state": "COMMENTED", "submittedAt": "2026-03-15T12:00:00Z", "body": "LGTM", "commit": { "oid": "aaa111" } }
               ]
             },
             "comments": { "nodes": [] },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "aaa111", "committedDate": "2026-03-15T10:00:00Z" } }
+                { "commit": { "oid": "aaa111" } }
               ]
             }
           },
@@ -57,15 +59,16 @@ const testGraphQLResponse = `{
             "additions": 50,
             "deletions": 10,
             "author": { "login": "dave" },
+            "headRefOid": "ddd111",
             "reviews": {
               "nodes": [
-                { "author": { "login": "myuser" }, "publishedAt": "2026-03-17T12:00:00Z" }
+                { "author": { "login": "myuser" }, "state": "COMMENTED", "submittedAt": "2026-03-17T12:00:00Z", "body": "**Verdict: Approved** :white_check_mark:", "commit": { "oid": "ddd111" } }
               ]
             },
             "comments": { "nodes": [] },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "ddd111", "committedDate": "2026-03-17T09:00:00Z" } }
+                { "commit": { "oid": "ddd111" } }
               ]
             }
           },
@@ -93,6 +96,7 @@ const testGraphQLResponse = `{
             "additions": 15,
             "deletions": 3,
             "author": { "login": "eve" },
+            "headRefOid": "eee111",
             "reviews": { "nodes": [] },
             "comments": {
               "nodes": [
@@ -101,7 +105,7 @@ const testGraphQLResponse = `{
             },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "eee111", "committedDate": "2026-03-19T09:00:00Z" } }
+                { "commit": { "oid": "eee111" } }
               ]
             }
           }
@@ -178,11 +182,12 @@ const testFollowUpResponse = `{
             "additions": 40,
             "deletions": 10,
             "author": { "login": "alice" },
+            "headRefOid": "aaa111",
             "reviews": { "nodes": [] },
             "comments": { "nodes": [] },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "aaa111", "committedDate": "2026-03-15T10:00:00Z" } }
+                { "commit": { "oid": "aaa111" } }
               ]
             }
           },
@@ -196,17 +201,18 @@ const testFollowUpResponse = `{
             "additions": 80,
             "deletions": 20,
             "author": { "login": "bob" },
+            "headRefOid": "bbb333",
             "reviews": {
               "nodes": [
-                { "author": { "login": "myuser" }, "publishedAt": "2026-03-12T10:00:00Z" }
+                { "author": { "login": "myuser" }, "state": "COMMENTED", "submittedAt": "2026-03-12T10:00:00Z", "body": "**Verdict: Approved** :white_check_mark:", "commit": { "oid": "bbb111" } }
               ]
             },
             "comments": { "nodes": [] },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "bbb111", "committedDate": "2026-03-11T10:00:00Z" } },
-                { "commit": { "oid": "bbb222", "committedDate": "2026-03-13T10:00:00Z" } },
-                { "commit": { "oid": "bbb333", "committedDate": "2026-03-14T10:00:00Z" } }
+                { "commit": { "oid": "bbb111" } },
+                { "commit": { "oid": "bbb222" } },
+                { "commit": { "oid": "bbb333" } }
               ]
             }
           },
@@ -220,6 +226,7 @@ const testFollowUpResponse = `{
             "additions": 15,
             "deletions": 5,
             "author": { "login": "charlie" },
+            "headRefOid": "ccc111",
             "reviews": { "nodes": [] },
             "comments": {
               "nodes": [
@@ -228,7 +235,7 @@ const testFollowUpResponse = `{
             },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "ccc111", "committedDate": "2026-03-11T10:00:00Z" } }
+                { "commit": { "oid": "ccc111" } }
               ]
             }
           }
@@ -293,11 +300,12 @@ const testRateLimitResponse = `{
             "additions": 5,
             "deletions": 2,
             "author": { "login": "alice" },
+            "headRefOid": "abc123",
             "reviews": { "nodes": [] },
             "comments": { "nodes": [] },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "abc123", "committedDate": "2026-03-15T10:00:00Z" } }
+                { "commit": { "oid": "abc123" } }
               ]
             }
           }
@@ -386,11 +394,12 @@ const testLabelsResponse = `{
               ]
             },
             "author": { "login": "alice" },
+            "headRefOid": "fff111",
             "reviews": { "nodes": [] },
             "comments": { "nodes": [] },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "fff111", "committedDate": "2026-03-15T10:00:00Z" } }
+                { "commit": { "oid": "fff111" } }
               ]
             }
           }
@@ -511,9 +520,10 @@ const testCommentAfterPushResponse = `{
             "additions": 900,
             "deletions": 40,
             "author": { "login": "myuser" },
+            "headRefOid": "f7a7d87",
             "reviews": {
               "nodes": [
-                { "author": { "login": "myuser" }, "publishedAt": "2026-10-08T16:17:53Z" }
+                { "author": { "login": "myuser" }, "state": "COMMENTED", "submittedAt": "2026-10-08T16:17:53Z", "body": "**Verdict: Approved** :white_check_mark:", "commit": { "oid": "0e5784e" } }
               ]
             },
             "comments": {
@@ -523,8 +533,8 @@ const testCommentAfterPushResponse = `{
             },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "0e5784e", "committedDate": "2026-10-08T16:16:18Z" } },
-                { "commit": { "oid": "f7a7d87", "committedDate": "2026-10-08T16:32:56Z" } }
+                { "commit": { "oid": "0e5784e" } },
+                { "commit": { "oid": "f7a7d87" } }
               ]
             }
           }
@@ -604,16 +614,17 @@ const testUnorderedReviewsResponse = `{
             "additions": 1,
             "deletions": 1,
             "author": { "login": "alice" },
+            "headRefOid": "ddd111",
             "reviews": {
               "nodes": [
-                { "author": { "login": "myuser" }, "publishedAt": "2026-03-20T10:00:00Z" },
-                { "author": { "login": "someone-else" }, "publishedAt": "2026-03-21T10:00:00Z" },
-                { "author": { "login": "myuser" }, "publishedAt": "2026-03-10T10:00:00Z" }
+                { "author": { "login": "myuser" }, "state": "COMMENTED", "submittedAt": "2026-03-20T10:00:00Z", "body": "**Verdict: Approved** :white_check_mark:", "commit": { "oid": "ddd111" } },
+                { "author": { "login": "someone-else" }, "state": "COMMENTED", "submittedAt": "2026-03-21T10:00:00Z", "body": "**Verdict: Approved** :white_check_mark:", "commit": { "oid": "zzz999" } },
+                { "author": { "login": "myuser" }, "state": "COMMENTED", "submittedAt": "2026-03-10T10:00:00Z", "body": "**Verdict: Approved** :white_check_mark:", "commit": { "oid": "ccc000" } }
               ]
             },
             "commits": {
               "nodes": [
-                { "commit": { "oid": "ddd111", "committedDate": "2026-03-15T10:00:00Z" } }
+                { "commit": { "oid": "ddd111" } }
               ]
             }
           }
@@ -637,5 +648,165 @@ func TestParseGraphQLResponse_NewestReviewWinsWhateverTheOrder(t *testing.T) {
 	// counting someone-else's 03-21 review would be wrong in the other direction.
 	if len(followUps) != 0 {
 		t.Fatalf("expected no follow-up (newest own review postdates the commit), got %d", len(followUps))
+	}
+}
+
+// oidFixture builds a one-PR GraphQL response. reviews are raw review nodes.
+func oidFixture(head string, commits []string, reviews ...string) []byte {
+	var c []string
+	for _, oid := range commits {
+		c = append(c, fmt.Sprintf(`{ "commit": { "oid": %q } }`, oid))
+	}
+	return []byte(fmt.Sprintf(`{"data":{"repository":{"pullRequests":{"nodes":[{
+		"number": 90, "title": "t", "url": "u", "isDraft": false, "createdAt": "2026-10-01T00:00:00Z",
+		"changedFiles": 1, "additions": 1, "deletions": 1,
+		"author": { "login": "alice" }, "headRefOid": %q,
+		"reviews": { "nodes": [%s] },
+		"commits": { "nodes": [%s] }
+	}]}}}}`, head, strings.Join(reviews, ","), strings.Join(c, ",")))
+}
+
+// sentinelReviewNode is a review pr-sentinel posted (it carries ReviewMarker).
+func sentinelReviewNode(at, oid string) string {
+	return fmt.Sprintf(`{ "author": { "login": "myuser" }, "state": "COMMENTED", "submittedAt": %q, "body": "**Verdict: Comment** :speech_balloon:", "commit": { "oid": %q } }`, at, oid)
+}
+
+func TestParseGraphQLResponse_OIDFollowUps(t *testing.T) {
+	tests := []struct {
+		name          string
+		data          []byte
+		wantNew       int
+		wantFollowUps int
+		wantCount     int
+		wantSince     string
+		wantRewritten bool
+		wantLastOID   string
+	}{
+		{
+			// Issue #5, as it happened on pr-sentinel#7: b6b3d0c was committed
+			// before the review that preceded it but pushed after. Commit dates
+			// say nothing is new; the head says otherwise.
+			name:          "commit authored before the review but pushed after it",
+			data:          oidFixture("b6b3d0c", []string{"78f5abc", "87ca90f", "b6b3d0c"}, sentinelReviewNode("2026-10-09T15:32:45Z", "87ca90f")),
+			wantFollowUps: 1, wantCount: 1, wantSince: "b6b3d0c", wantLastOID: "87ca90f",
+		},
+		{
+			name: "head is the reviewed commit",
+			data: oidFixture("aaa", []string{"aaa"}, sentinelReviewNode("2026-10-01T00:00:00Z", "aaa")),
+		},
+		{
+			name:          "force-push: reviewed commit gone from history",
+			data:          oidFixture("new2", []string{"new1", "new2"}, sentinelReviewNode("2026-10-01T00:00:00Z", "gone")),
+			wantFollowUps: 1, wantRewritten: true, wantLastOID: "gone",
+		},
+		{
+			name:          "review without a commit is left to the poller",
+			data:          oidFixture("aaa", []string{"aaa"}, `{ "author": { "login": "myuser" }, "state": "COMMENTED", "submittedAt": "2026-10-01T00:00:00Z", "body": "**Verdict: Approved**", "commit": null }`),
+			wantFollowUps: 1, wantLastOID: "",
+		},
+		{
+			// prism#494: the same account's thread reply is a COMMENTED review
+			// stamped with the head at reply time. It must not hide the push.
+			name: "same-account reply at head does not hide a push",
+			data: oidFixture("bbb", []string{"aaa", "bbb"},
+				sentinelReviewNode("2026-10-01T00:00:00Z", "aaa"),
+				`{ "author": { "login": "myuser" }, "state": "COMMENTED", "submittedAt": "2026-10-02T00:00:00Z", "body": "", "commit": { "oid": "bbb" } }`),
+			wantFollowUps: 1, wantCount: 1, wantSince: "bbb", wantLastOID: "aaa",
+		},
+		{
+			name: "manual review only: not reviewed by pr-sentinel",
+			data: oidFixture("aaa", []string{"aaa"},
+				`{ "author": { "login": "myuser" }, "state": "APPROVED", "submittedAt": "2026-10-02T00:00:00Z", "body": "looks fine", "commit": { "oid": "aaa" } }`),
+			wantNew: 1,
+		},
+		{
+			name: "pending review ignored",
+			data: oidFixture("bbb", []string{"aaa", "bbb"},
+				sentinelReviewNode("2026-10-01T00:00:00Z", "aaa"),
+				`{ "author": { "login": "myuser" }, "state": "PENDING", "submittedAt": null, "body": "**Verdict: Approved**", "commit": { "oid": "bbb" } }`),
+			wantFollowUps: 1, wantCount: 1, wantSince: "bbb", wantLastOID: "aaa",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prs, fus, err := parseGraphQLResponse(tt.data, "o/r", "myuser", false)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if len(prs) != tt.wantNew || len(fus) != tt.wantFollowUps {
+				t.Fatalf("new=%d followUps=%d, want %d/%d", len(prs), len(fus), tt.wantNew, tt.wantFollowUps)
+			}
+			if tt.wantFollowUps == 0 {
+				return
+			}
+			f := fus[0]
+			if f.NewCommitCount != tt.wantCount || f.NewCommitSince != tt.wantSince || f.Rewritten != tt.wantRewritten || f.LastReviewOID != tt.wantLastOID {
+				t.Errorf("got count=%d since=%q rewritten=%v last=%q, want %d %q %v %q",
+					f.NewCommitCount, f.NewCommitSince, f.Rewritten, f.LastReviewOID,
+					tt.wantCount, tt.wantSince, tt.wantRewritten, tt.wantLastOID)
+			}
+			if f.HeadOID == "" || len(f.CommitOIDs) == 0 {
+				t.Errorf("head/commits not populated: %+v", f.PullRequest)
+			}
+		})
+	}
+}
+
+func TestPRQueryAsksForCommitsNotClocks(t *testing.T) {
+	for _, want := range []string{"headRefOid", "commit { oid }", "author: $author", "submittedAt"} {
+		if !strings.Contains(prQuery, want) {
+			t.Errorf("prQuery missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"committedDate", "PENDING"} {
+		if strings.Contains(prQuery, unwanted) {
+			t.Errorf("prQuery should not contain %q", unwanted)
+		}
+	}
+}
+
+func TestCommitsSince(t *testing.T) {
+	commits := []string{"a", "b", "c"}
+	tests := []struct {
+		reviewed      string
+		wantSince     string
+		wantCount     int
+		wantRewritten bool
+	}{
+		{"a", "b", 2, false},
+		{"b", "c", 1, false},
+		{"c", "", 0, false},
+		{"x", "", 0, true},
+	}
+	for _, tt := range tests {
+		since, count, rewritten := CommitsSince(commits, tt.reviewed)
+		if since != tt.wantSince || count != tt.wantCount || rewritten != tt.wantRewritten {
+			t.Errorf("CommitsSince(%q) = %q,%d,%v want %q,%d,%v", tt.reviewed, since, count, rewritten, tt.wantSince, tt.wantCount, tt.wantRewritten)
+		}
+	}
+}
+
+func TestBuildReviewRequest(t *testing.T) {
+	tests := []struct{ verdict, want string }{
+		{"approve", "APPROVE"},
+		{"request-changes", "REQUEST_CHANGES"},
+		{"comment", "COMMENT"},
+		{"", "COMMENT"},
+	}
+	for _, tt := range tests {
+		r := buildReviewRequest("body", tt.verdict, "abc")
+		if r.Event != tt.want || r.CommitID != "abc" || r.Body != "body" {
+			t.Errorf("verdict %q → %+v, want event %s", tt.verdict, r, tt.want)
+		}
+	}
+}
+
+func TestParsePRView_HeadAndCommits(t *testing.T) {
+	pr, err := parsePRView([]byte(`{"number":1,"headRefOid":"ccc","commits":[{"oid":"aaa"},{"oid":"ccc"}],"author":{"login":"a"}}`), "o/r")
+	if err != nil {
+		t.Fatalf("parsePRView: %v", err)
+	}
+	if pr.HeadOID != "ccc" || strings.Join(pr.CommitOIDs, ",") != "aaa,ccc" {
+		t.Errorf("head=%q commits=%v", pr.HeadOID, pr.CommitOIDs)
 	}
 }

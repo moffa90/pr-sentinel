@@ -70,6 +70,11 @@ func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts Pol
 			postVerdict = "comment"
 		}
 		if err := retry.Do(3, 2*time.Second, "post review", func() error {
+			// Pin the review to the commit that was polled, so a push during
+			// the review is not stamped as reviewed.
+			if pr.HeadOID != "" {
+				return gh.PostReviewAtCommit(repo.Name, pr.Number, body, postVerdict, pr.HeadOID)
+			}
 			return gh.PostReview(repo.Name, pr.Number, body, postVerdict)
 		}); err != nil {
 			return out, fmt.Errorf("posting review: %w", err)
@@ -112,6 +117,7 @@ func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts Pol
 		Posted:          out.Posted,
 		CostUSD:         rr.CostUSD,
 		Models:          strings.Join(rr.Models, ","),
+		HeadOID:         pr.HeadOID,
 		ReviewedAt:      time.Now().UTC(),
 	}); err != nil {
 		slog.Error("failed to record review", "repo", repo.Name, "pr", pr.Number, "error", err)

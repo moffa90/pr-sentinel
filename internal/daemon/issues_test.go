@@ -14,7 +14,8 @@ import (
 type mockGitHub struct {
 	created       int
 	commented     []string
-	posted        []string // verdicts passed to PostReview
+	posted        []string // verdicts passed to PostReview / PostReviewAtCommit
+	pinned        []string // commits passed to PostReviewAtCommit
 	merged        int
 	lastBody      string
 	lastLabel     []string
@@ -42,6 +43,14 @@ func (m *mockGitHub) PostReview(_ string, _ int64, body, verdict string) error {
 	}
 	m.posted = append(m.posted, verdict)
 	m.lastBody = body
+	return nil
+}
+
+func (m *mockGitHub) PostReviewAtCommit(repo string, number int64, body, verdict, commitOID string) error {
+	if err := m.PostReview(repo, number, body, verdict); err != nil {
+		return err
+	}
+	m.pinned = append(m.pinned, commitOID)
 	return nil
 }
 
