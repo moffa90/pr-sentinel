@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -99,5 +100,24 @@ func TestReviewFilePath(t *testing.T) {
 	}
 	if !strings.HasSuffix(path, ".md") {
 		t.Errorf("expected path to end with .md, got %q", path)
+	}
+}
+
+func TestSaveDryRunReview_OwnerOnly(t *testing.T) {
+	reviews := filepath.Join(t.TempDir(), "reviews")
+	// A directory left world-readable by an older version is tightened.
+	if err := os.MkdirAll(reviews, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := SaveDryRunReview(SaveParams{ReviewsDir: reviews, Repo: "o/r", PRNumber: 1, Body: "b"})
+	if err != nil {
+		t.Fatalf("SaveDryRunReview: %v", err)
+	}
+	if info, _ := os.Stat(reviews); info.Mode().Perm() != 0o700 {
+		t.Errorf("reviews dir perm = %o, want 700", info.Mode().Perm())
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("review file perm = %o, want 600", info.Mode().Perm())
 	}
 }

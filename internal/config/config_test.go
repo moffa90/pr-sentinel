@@ -393,3 +393,33 @@ func TestReviewModel(t *testing.T) {
 		t.Error("fallback equal to model should fail validation")
 	}
 }
+
+func TestConfigFilePermissionsTightened(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := DefaultConfig()
+	if err := Save(cfg, path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// A file loosened by hand is tightened on Load.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("after Load perm = %o, want 600", info.Mode().Perm())
+	}
+
+	// Save over an existing loose file tightens it too.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(cfg, path); err != nil {
+		t.Fatalf("Save over existing: %v", err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("after Save perm = %o, want 600", info.Mode().Perm())
+	}
+}

@@ -46,8 +46,13 @@ func PostLiveReview(repo string, prNumber int64, body string, verdict string) er
 // SaveDryRunReview writes the review to a markdown file in the given directory
 // and returns the file path.
 func SaveDryRunReview(params SaveParams) (string, error) {
-	if err := os.MkdirAll(params.ReviewsDir, 0o755); err != nil {
+	// Reviews contain PR content, so keep them owner-only. Chmod covers a
+	// directory created by an older version with 0755.
+	if err := os.MkdirAll(params.ReviewsDir, 0o700); err != nil {
 		return "", fmt.Errorf("failed to create reviews directory: %w", err)
+	}
+	if err := os.Chmod(params.ReviewsDir, 0o700); err != nil {
+		return "", fmt.Errorf("failed to restrict reviews directory: %w", err)
 	}
 
 	path := reviewFilePath(params.ReviewsDir, params.Repo, params.PRNumber)
@@ -65,7 +70,7 @@ func SaveDryRunReview(params SaveParams) (string, error) {
 
 	content := header + params.Body
 
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", fmt.Errorf("failed to write review file: %w", err)
 	}
 
