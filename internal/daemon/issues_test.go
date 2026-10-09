@@ -16,6 +16,8 @@ type mockGitHub struct {
 	commented     []string
 	posted        []string // verdicts passed to PostReview / PostReviewAtCommit
 	pinned        []string // commits passed to PostReviewAtCommit
+	pinErr        error    // returned by PostReviewAtCommit
+	pinCalls      int
 	merged        int
 	lastBody      string
 	lastLabel     []string
@@ -47,6 +49,10 @@ func (m *mockGitHub) PostReview(_ string, _ int64, body, verdict string) error {
 }
 
 func (m *mockGitHub) PostReviewAtCommit(repo string, number int64, body, verdict, commitOID string) error {
+	m.pinCalls++
+	if m.pinErr != nil {
+		return m.pinErr
+	}
 	if err := m.PostReview(repo, number, body, verdict); err != nil {
 		return err
 	}

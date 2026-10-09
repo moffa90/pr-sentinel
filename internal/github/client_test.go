@@ -810,3 +810,32 @@ func TestParsePRView_HeadAndCommits(t *testing.T) {
 		t.Errorf("head=%q commits=%v", pr.HeadOID, pr.CommitOIDs)
 	}
 }
+
+func TestIsCommitNotInPR(t *testing.T) {
+	real := `gh: Unprocessable Entity (HTTP 422) {"message":"Unprocessable Entity","errors":["The commitOID is not part of the pull request"],"status":"422"}`
+	if !isCommitNotInPR(real) {
+		t.Error("GitHub's 422 for a stale commit not recognised")
+	}
+	if isCommitNotInPR(`gh: Unprocessable Entity (HTTP 422) {"errors":["Can not approve your own pull request"]}`) {
+		t.Error("a different 422 must not be treated as a stale commit")
+	}
+}
+
+func TestIsSentinelReview(t *testing.T) {
+	tests := []struct {
+		body string
+		want bool
+	}{
+		{"> AI-assisted review\n\n**Verdict: Approved** :white_check_mark:\n\nok", true},
+		{"**Verdict: Changes Requested** :x:", true},
+		{"**Verdict: Comment** :speech_balloon:", true},
+		{"Agreeing with the bot here:\n> **Verdict: Approved**", false},
+		{"see **Verdict: Approved** above", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := IsSentinelReview(tt.body); got != tt.want {
+			t.Errorf("IsSentinelReview(%q) = %v, want %v", tt.body, got, tt.want)
+		}
+	}
+}

@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -168,8 +170,29 @@ func TestProcessReviewWith_PinsToHeadAndRecordsIt(t *testing.T) {
 func TestReviewBodyCarriesReviewMarker(t *testing.T) {
 	for _, disclosure := range []bool{true, false} {
 		body := ReviewBody(PollOptions{AIDisclosure: disclosure, DisclosureText: "> AI"}, github.PullRequest{Author: "a"}, structuredResult())
-		if !strings.Contains(body, github.ReviewMarker) {
-			t.Errorf("disclosure=%v: body lacks %q:\n%s", disclosure, github.ReviewMarker, body)
+		if !strings.Contains(body, github.ReviewMarker) || !github.IsSentinelReview(body) {
+			t.Errorf("disclosure=%v: body not recognised as pr-sentinel's:\n%s", disclosure, body)
 		}
+	}
+}
+
+func TestProcessReviewWith_StaleHeadIsNotRetried(t *testing.T) {
+	store := testStore(t)
+	gh := &mockGitHub{pinErr: fmt.Errorf("posting review: %w", github.ErrCommitNotInPR)}
+	repo := config.RepoConfig{Name: "o/r", Mode: config.ModeLive}
+
+	start := time.Now()
+	_, err := ProcessReviewWith(store, nil, PollOptions{}, repo, github.PullRequest{Number: 1, HeadOID: "gone"}, structuredResult(), gh)
+	if !errors.Is(err, github.ErrCommitNotInPR) {
+		t.Fatalf("err = %v, want ErrCommitNotInPR", err)
+	}
+	if gh.pinCalls != 1 {
+		t.Errorf("pinned post attempts = %d, want 1", gh.pinCalls)
+	}
+	if time.Since(start) > time.Second {
+		t.Errorf("took %s: retry backoff should be skipped", time.Since(start))
+	}
+	if reviewed, _ := store.HasReviewed("o/r", 1); reviewed {
+		t.Error("a review that was not posted must not be recorded")
 	}
 }

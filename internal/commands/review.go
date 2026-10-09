@@ -121,6 +121,11 @@ func runReview(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  %s No new commits since that review; re-reviewing anyway\n", ui.IconDot)
 		default:
 			_, params.NewCommitCount, params.Rewritten = ghclient.CommitsSince(pr.CommitOIDs, prev.HeadOID)
+			// gh may cap the commit list at 100; a missing commit in a full
+			// list is unknown, not proof of a rewrite.
+			if params.Rewritten && len(pr.CommitOIDs) >= 100 {
+				params.Rewritten = false
+			}
 		}
 		prompt = reviewer.BuildFollowUpPrompt(params)
 	} else {

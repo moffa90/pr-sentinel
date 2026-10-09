@@ -499,8 +499,8 @@ func migrateAddModelsColumn(db *sql.DB) error {
 }
 
 // migrateAddHeadOIDColumn adds the head_oid column to existing databases.
-// Existing rows keep ”: the poller adopts the PR's current head as their
-// baseline instead of treating "unknown" as "changed".
+// Existing rows keep an empty head_oid: the poller adopts the PR's current
+// head as their baseline instead of treating "unknown" as "changed".
 func migrateAddHeadOIDColumn(db *sql.DB) error {
 	var tableSql string
 	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviewed_prs'").Scan(&tableSql)

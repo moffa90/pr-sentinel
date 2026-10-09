@@ -3,10 +3,11 @@ package github
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -74,6 +75,16 @@ type graphQLPullRequest struct {
 // which GitHub stamps with whatever the head is when they are posted.
 const ReviewMarker = "**Verdict: "
 
+// sentinelVerdictRe matches the full verdict line at the start of a line, so a
+// manual review that merely quotes an earlier pr-sentinel review is not
+// mistaken for one.
+var sentinelVerdictRe = regexp.MustCompile(`(?m)^\*\*Verdict: (Approved|Changes Requested|Comment)\*\*`)
+
+// IsSentinelReview reports whether a review body was written by pr-sentinel.
+func IsSentinelReview(body string) bool {
+	return sentinelVerdictRe.MatchString(body)
+}
+
 // GraphQL query template that fetches open PRs (first 50) with reviews.
 const prQuery = `query($owner: String!, $name: String!, $author: String) {
   repository(owner: $owner, name: $name) {
@@ -94,7 +105,7 @@ const prQuery = `query($owner: String!, $name: String!, $author: String) {
         }
         author { login }
         headRefOid
-        reviews(last: 50, author: $author, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
+        reviews(last: 20, author: $author, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
           nodes {
             author { login }
             state
@@ -254,9 +265,12 @@ type sentinelReview struct {
 // counting comments did. PENDING reviews are excluded by the query and by the
 // zero submittedAt check.
 //
-// The query asks for reviews(last: 50): a GraphQL connection returns oldest
-// first, so `first` would return the opening 50 and miss the newest review on
-// a long-lived PR. The newest is picked by time, not by node order.
+// The query asks for reviews(last: 20): a GraphQL connection returns oldest
+// first, so `first` would return the opening page and miss the newest review
+// on a long-lived PR. The author filter keeps other reviewers out of the
+// window and bodies are full reviews, so 20 is plenty; if a burst of the
+// user's own replies pushes pr-sentinel's review out, the poller falls back to
+// the stored head_oid. The newest is picked by time, not by node order.
 func lastSentinelReview(node graphQLPullRequest, githubUser string) (sentinelReview, bool) {
 	var last sentinelReview
 	found := false
@@ -264,7 +278,7 @@ func lastSentinelReview(node graphQLPullRequest, githubUser string) (sentinelRev
 		if !strings.EqualFold(r.Author.Login, githubUser) || r.SubmittedAt.IsZero() || r.State == "PENDING" {
 			continue
 		}
-		if !strings.Contains(r.Body, ReviewMarker) {
+		if !IsSentinelReview(r.Body) {
 			continue
 		}
 		if !found || r.SubmittedAt.After(last.at) {
@@ -376,6 +390,11 @@ func buildReviewRequest(body, verdict, commitOID string) reviewRequest {
 	return reviewRequest{CommitID: commitOID, Body: body, Event: event}
 }
 
+// ErrCommitNotInPR means GitHub refused a pinned review because the commit is
+// no longer part of the PR (it was force-pushed away while the review ran).
+// Retrying cannot help; the next cycle reviews the new head.
+var ErrCommitNotInPR = errors.New("commit is no longer part of the pull request")
+
 // PostReviewAtCommit posts a review pinned to commitOID through the REST API.
 //
 // `gh pr review` has no commit option, so GitHub stamps its review with the
@@ -396,19 +415,30 @@ func PostReviewAtCommit(repo string, number int64, body, verdict, commitOID stri
 		"--input", "-",
 	)
 	cmd.Stdin = bytes.NewReader(payload)
-	cmd.Stdout = io.Discard
 
-	var stderr bytes.Buffer
+	// On an API error gh prints the response body (with GitHub's reason) to
+	// stdout and only "HTTP 422" to stderr, so both are kept.
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return fmt.Errorf("posting review on %s#%d at %s failed: %s: %w", repo, number, shortOID(commitOID), errMsg, err)
+		detail := strings.TrimSpace(stderr.String() + " " + stdout.String())
+		if isCommitNotInPR(detail) {
+			return fmt.Errorf("posting review on %s#%d at %s: %w", repo, number, shortOID(commitOID), ErrCommitNotInPR)
+		}
+		if detail != "" {
+			return fmt.Errorf("posting review on %s#%d at %s failed: %s: %w", repo, number, shortOID(commitOID), detail, err)
 		}
 		return fmt.Errorf("posting review on %s#%d at %s failed: %w", repo, number, shortOID(commitOID), err)
 	}
 	return nil
+}
+
+// isCommitNotInPR matches GitHub's 422 for a commit_id outside the PR:
+// {"errors":["The commitOID is not part of the pull request"],"status":"422"}.
+func isCommitNotInPR(output string) bool {
+	return strings.Contains(strings.ToLower(output), "not part of the pull request")
 }
 
 // shortOID abbreviates a commit OID for messages.
@@ -477,6 +507,8 @@ const prViewFields = "number,title,url,isDraft,additions,deletions,changedFiles,
 
 // GetPR fetches a single PR's metadata via `gh pr view`.
 func GetPR(repo string, number int64) (PullRequest, error) {
+	// Note: `commits` from gh pr view may be capped at 100 entries; the review
+	// command treats a reviewed commit missing from a full list as unknown.
 	cmd := exec.Command("gh", "pr", "view",
 		fmt.Sprintf("%d", number),
 		"-R", repo,

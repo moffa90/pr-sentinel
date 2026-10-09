@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -73,7 +74,13 @@ func ProcessReviewWith(store *state.Store, notify *notifier.Dispatcher, opts Pol
 			// Pin the review to the commit that was polled, so a push during
 			// the review is not stamped as reviewed.
 			if pr.HeadOID != "" {
-				return gh.PostReviewAtCommit(repo.Name, pr.Number, body, postVerdict, pr.HeadOID)
+				err := gh.PostReviewAtCommit(repo.Name, pr.Number, body, postVerdict, pr.HeadOID)
+				if errors.Is(err, github.ErrCommitNotInPR) {
+					// Force-pushed away during the review: retrying can't
+					// help, and the next cycle reviews the new head.
+					return retry.Stop(err)
+				}
+				return err
 			}
 			return gh.PostReview(repo.Name, pr.Number, body, postVerdict)
 		}); err != nil {
