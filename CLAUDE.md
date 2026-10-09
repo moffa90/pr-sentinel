@@ -79,7 +79,7 @@ No clock is compared. A PR needs a follow-up when its head commit differs from t
 - **State side** (`head_oid`): covers dry-run and promoted repos, which never post. The newer of the stored review and the GitHub review wins, since the stored one is written after the post (a newer GitHub review comes from another host).
 - **Unknown never counts as changed.** A row from before `head_oid` existed adopts the current head as its baseline (`SetHeadOID`) and is skipped, so rollout causes no burst.
 - **Pinning:** reviews post through `PostReviewAtCommit` against the polled head, so a push during a review leaves head ≠ reviewed commit and is reviewed next cycle. GitHub rejects (422, "not part of the pull request") a commit no longer in the PR; that's `github.ErrCommitNotInPR`, returned through `retry.Stop` so it isn't retried, and the PR is reviewed against the new head next cycle.
-- `NewCommitCount` counts commits after the reviewed one in `CommitOIDs`; if the reviewed commit isn't there (force-push or rebase), `Rewritten` is set and the follow-up prompt asks for the full diff.
+- `NewCommitCount` counts commits after the reviewed one in `CommitOIDs`; if the reviewed commit isn't there (force-push, rebase, or more than 100 commits since), `Rewritten` is set and the follow-up prompt asks for the full diff. The daemon and the `review` command handle this identically.
 
 ### Review output contract
 

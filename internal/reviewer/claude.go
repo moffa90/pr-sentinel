@@ -87,8 +87,9 @@ type FollowUpParams struct {
 	// the previous review was written against. Either may be "" if unknown.
 	HeadOID         string
 	PreviousHeadOID string
-	// Rewritten means PreviousHeadOID is no longer in the PR's history
-	// (force-push or rebase), so commits cannot be counted.
+	// Rewritten means PreviousHeadOID is not in the PR's fetched history
+	// (force-push, rebase, or more than 100 commits since), so commits cannot
+	// be counted.
 	Rewritten bool
 }
 
@@ -104,7 +105,7 @@ func BuildFollowUpPrompt(p FollowUpParams) string {
 	fmt.Fprintf(&b, "Stats: %d files changed, %d additions, %d deletions\n", p.Files, p.Adds, p.Dels)
 	switch {
 	case p.Rewritten:
-		b.WriteString("New activity: the branch history was rewritten since the last review (force-push or rebase)\n")
+		b.WriteString("New activity: the previously reviewed commit is no longer in the PR's recent history (force-push, rebase, or more than 100 commits since)\n")
 	case p.NewCommitCount > 0:
 		fmt.Fprintf(&b, "New activity: %d new commit(s) since last review\n", p.NewCommitCount)
 	default:
@@ -126,7 +127,7 @@ func BuildFollowUpPrompt(p FollowUpParams) string {
 	b.WriteString("This is a follow-up review. A previous review was already posted (shown above).\n")
 	switch {
 	case p.Rewritten:
-		b.WriteString("The branch was force-pushed or rebased since that review, so the commits it covered may be gone or changed. Review the full current diff, not only recent commits.\n\n")
+		b.WriteString("The commit that review covered is no longer in the PR's recent history: the branch was force-pushed or rebased, or more than 100 commits landed since. Review the full current diff, not only recent commits.\n\n")
 	case p.NewCommitCount > 0:
 		b.WriteString("The PR author has pushed new commits since that review.\n\n")
 	default:

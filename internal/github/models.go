@@ -32,5 +32,5 @@ type FollowUpCandidate struct {
 	LastReviewOID  string    // commit that review was written against; "" if GitHub has none
 	NewCommitSince string    // OID of the first commit after LastReviewOID
 	NewCommitCount int       // commits after LastReviewOID; 0 when Rewritten
-	Rewritten      bool      // LastReviewOID is not in the PR's history (force-push or rebase)
+	Rewritten      bool      // LastReviewOID is not in the fetched history (force-push, rebase, or >100 commits since)
 }

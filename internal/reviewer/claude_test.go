@@ -489,7 +489,7 @@ func TestBuildFollowUpPrompt_ManualRereview(t *testing.T) {
 
 func TestBuildFollowUpPrompt_OIDs(t *testing.T) {
 	rewritten := BuildFollowUpPrompt(FollowUpParams{Repo: "o/r", PRNumber: 1, HeadOID: "bbb", PreviousHeadOID: "aaa", Rewritten: true})
-	for _, want := range []string{"history was rewritten", "Head commit: bbb", "written against: aaa", "full current diff"} {
+	for _, want := range []string{"no longer in the PR's recent history", "Head commit: bbb", "written against: aaa", "full current diff"} {
 		if !strings.Contains(rewritten, want) {
 			t.Errorf("rewritten prompt missing %q:\n%s", want, rewritten)
 		}

@@ -294,8 +294,10 @@ func lastSentinelReview(node graphQLPullRequest, githubUser string) (sentinelRev
 
 // CommitsSince locates reviewedOID in the PR's commits (oldest first) and
 // returns the first commit after it and how many follow it. If reviewedOID is
-// not in the list, the branch was rewritten since (force-push or rebase), or
-// it is older than the last 100 commits: rewritten is true and the count is 0.
+// not in the list, rewritten is true and the count is 0: either the branch was
+// rewritten (force-push or rebase), or more than 100 commits followed it and
+// it fell off the fetched list. Both the daemon and the review command treat
+// the two alike: the follow-up prompt asks for the full diff.
 func CommitsSince(commits []string, reviewedOID string) (since string, count int, rewritten bool) {
 	return commitsSince(commits, reviewedOID)
 }
@@ -507,8 +509,6 @@ const prViewFields = "number,title,url,isDraft,additions,deletions,changedFiles,
 
 // GetPR fetches a single PR's metadata via `gh pr view`.
 func GetPR(repo string, number int64) (PullRequest, error) {
-	// Note: `commits` from gh pr view may be capped at 100 entries; the review
-	// command treats a reviewed commit missing from a full list as unknown.
 	cmd := exec.Command("gh", "pr", "view",
 		fmt.Sprintf("%d", number),
 		"-R", repo,
