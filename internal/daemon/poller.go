@@ -174,7 +174,7 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 			dailyCount++
 		}
 
-		// Collect follow-up work items (PRs with new commits since last user comment)
+		// Collect follow-up work items (PRs with new commits since the last review)
 		for _, candidate := range followUpCandidates {
 			if ctx.Err() != nil {
 				break

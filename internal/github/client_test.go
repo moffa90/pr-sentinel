@@ -1,6 +1,7 @@
 package github
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -563,5 +564,78 @@ func TestParseGraphQLResponse_CommentAfterPushStillFollowsUp(t *testing.T) {
 	if got.LastReviewAt.UTC().Format(time.RFC3339) != wantReview {
 		t.Errorf("LastReviewAt = %s, want %s (the review, not the comment)",
 			got.LastReviewAt.UTC().Format(time.RFC3339), wantReview)
+	}
+}
+
+// The watermark is computed from the reviews connection and nothing else, so
+// the query has to ask for the NEWEST page. A GraphQL connection returns
+// oldest-first, so `reviews(first: 50)` quietly strands the watermark at an
+// ancient timestamp once a PR passes 50 reviews — and every commit then looks
+// new, so each cycle queues a follow-up whose own review also lands outside
+// the window. That is a billing loop, not a missed review.
+//
+// This guard belongs on the query, not on parseGraphQLResponse: the parser
+// only ever sees the nodes it is handed and cannot tell which page they came
+// from, so a parse-level test passes with either spelling.
+func TestPRQueryAsksForTheNewestReviews(t *testing.T) {
+	if strings.Contains(prQuery, "reviews(first:") {
+		t.Error("prQuery asks for reviews(first: N) — that is the oldest page; use last:")
+	}
+	if !strings.Contains(prQuery, "reviews(last:") {
+		t.Error("prQuery must fetch reviews(last: N) so the newest review is present")
+	}
+}
+
+// testUnorderedReviewsResponse puts the user's NEWEST review first and an older
+// one last, so an implementation that trusted node order instead of comparing
+// timestamps would read the wrong watermark.
+const testUnorderedReviewsResponse = `{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "nodes": [
+          {
+            "number": 70,
+            "title": "fix: something long-running",
+            "url": "https://github.com/owner/repo/pull/70",
+            "isDraft": false,
+            "createdAt": "2026-03-01T10:00:00Z",
+            "changedFiles": 1,
+            "additions": 1,
+            "deletions": 1,
+            "author": { "login": "alice" },
+            "reviews": {
+              "nodes": [
+                { "author": { "login": "myuser" }, "publishedAt": "2026-03-20T10:00:00Z" },
+                { "author": { "login": "someone-else" }, "publishedAt": "2026-03-21T10:00:00Z" },
+                { "author": { "login": "myuser" }, "publishedAt": "2026-03-10T10:00:00Z" }
+              ]
+            },
+            "commits": {
+              "nodes": [
+                { "commit": { "oid": "ddd111", "committedDate": "2026-03-15T10:00:00Z" } }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}`
+
+func TestParseGraphQLResponse_NewestReviewWinsWhateverTheOrder(t *testing.T) {
+	prs, followUps, err := parseGraphQLResponse([]byte(testUnorderedReviewsResponse), "owner/repo", "myuser", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prs) != 0 {
+		t.Fatalf("expected no new PRs, got %d", len(prs))
+	}
+
+	// myuser's newest review is 03-20; the only commit is 03-15, so there is
+	// nothing to follow up. Reading 03-10 instead would wrongly queue one, and
+	// counting someone-else's 03-21 review would be wrong in the other direction.
+	if len(followUps) != 0 {
+		t.Fatalf("expected no follow-up (newest own review postdates the commit), got %d", len(followUps))
 	}
 }

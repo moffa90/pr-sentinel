@@ -17,8 +17,8 @@ type PullRequest struct {
 	Labels    []string
 }
 
-// FollowUpCandidate is a PR that was previously reviewed/commented on by the user
-// but has new commits since the last comment.
+// FollowUpCandidate is a PR the user has already reviewed that has picked up
+// new commits since that review. Comments do not count — see parseGraphQLResponse.
 type FollowUpCandidate struct {
 	PullRequest
 	LastReviewAt   time.Time // when the user last REVIEWED (comments do not count)

@@ -81,7 +81,7 @@ const prQuery = `query($owner: String!, $name: String!) {
           }
         }
         author { login }
-        reviews(first: 50) {
+        reviews(last: 50) {
           nodes {
             author { login }
             publishedAt
@@ -192,6 +192,12 @@ func parseGraphQLResponse(data []byte, repo string, githubUser string, reviewOwn
 		// commit — the follow-up review is then skipped for good, because no
 		// later commit will ever arrive. Cellgain/spark-poc#60 sat that way:
 		// review 16:17:53Z, commit 16:32:56Z, comment 16:33:24Z.
+		// The query asks for reviews(last: 50): a GraphQL connection returns
+		// oldest-first, so `first` would hand back the opening 50 reviews and
+		// hide the most recent one on a long-lived PR. That is not a missed
+		// follow-up but a loop — a stale watermark makes every commit look
+		// new, every cycle queues a review, and each review lands outside the
+		// window too, until the daily cap stops it.
 		var lastReview time.Time
 		for _, review := range node.Reviews.Nodes {
 			if strings.EqualFold(review.Author.Login, githubUser) {
