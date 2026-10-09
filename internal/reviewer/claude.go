@@ -13,6 +13,12 @@ import (
 
 const DefaultTimeout = 5 * time.Minute
 
+// claudeBinary is the CLI that RunReview executes. It is a variable, not a
+// constant, so tests can point it at a stub: every call here spawns a real
+// model run, and a test suite that bills money and needs an authenticated
+// CLI is a test suite that gets skipped.
+var claudeBinary = "claude"
+
 type ReviewParams struct {
 	Repo     string
 	PRNumber int64
@@ -161,7 +167,7 @@ func RunReviewWithModel(ctx context.Context, repoPath string, prompt string, glo
 	defer cancel()
 
 	args := BuildClaudeArgsWithModel(prompt, globalInstructions, repoInstructions, m)
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd := exec.CommandContext(ctx, claudeBinary, args...)
 	cmd.Dir = repoPath
 	slog.Debug("starting claude", "dir", repoPath, "timeout", timeout, "prompt_bytes", len(prompt), "arg_count", len(args))
 

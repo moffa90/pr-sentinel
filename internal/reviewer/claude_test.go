@@ -2,10 +2,71 @@ package reviewer
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+// fakeClaudeEnv switches this test binary into stub-claude mode. TestMain
+// checks it before running any test, so RunReview can exec os.Args[0] and get
+// a predictable `claude` back without a network call, an API key, or a bill.
+const fakeClaudeEnv = "PR_SENTINEL_FAKE_CLAUDE"
+
+const fakeEnvelope = `{"type":"result","subtype":"success","is_error":false,` +
+	`"result":"ignored when structured_output is present",` +
+	`"structured_output":{"verdict":"approve","summary":"Looks fine.","findings":[]},` +
+	`"total_cost_usd":0.0123,"modelUsage":{"claude-opus-5-5":{}}}`
+
+func TestMain(m *testing.M) {
+	switch os.Getenv(fakeClaudeEnv) {
+	case "":
+		os.Exit(m.Run())
+	case "ok":
+		fmt.Println(fakeEnvelope)
+	case "slow":
+		// Longer than any timeout a test sets, so the deadline always wins.
+		time.Sleep(time.Minute)
+	case "fail":
+		fmt.Fprintln(os.Stderr, "Invalid API key - not authenticated")
+		os.Exit(1)
+	default:
+		fmt.Fprintln(os.Stderr, "unknown fake claude mode")
+		os.Exit(2)
+	}
+	os.Exit(0)
+}
+
+// useFakeClaude points RunReview at this test binary in the given stub mode
+// for the duration of the test.
+func useFakeClaude(t *testing.T, mode string) {
+	t.Helper()
+	original := claudeBinary
+	claudeBinary = os.Args[0]
+	t.Cleanup(func() { claudeBinary = original })
+	t.Setenv(fakeClaudeEnv, mode)
+}
+
+// waitForGoroutines fails if the goroutine count has not fallen back to want.
+// RunReview cancels its heartbeat after cmd.Run returns, so the goroutine may
+// still be winding down for an instant; a single sample would be racy.
+func waitForGoroutines(t *testing.T, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got := runtime.NumGoroutine()
+		if got <= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("goroutines did not settle: %d running, %d before the review", got, want)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestDefaultTimeout(t *testing.T) {
 	expected := 5 * time.Minute
@@ -94,14 +155,56 @@ func TestBuildClaudeArgs_BothInstructions(t *testing.T) {
 }
 
 func TestRunReview_CompletesWithoutLeak(t *testing.T) {
-	ctx := context.Background()
-	// Use a fast command that exits immediately
-	result := RunReview(ctx, t.TempDir(), "echo hello", "", "", 10*time.Second)
+	useFakeClaude(t, "ok")
+	before := runtime.NumGoroutine()
+
+	result := RunReview(context.Background(), t.TempDir(), "review this", "", "", 30*time.Second)
+
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
 	if result.Duration <= 0 {
 		t.Error("duration should be positive")
+	}
+	if result.Review == nil {
+		t.Fatalf("envelope was not parsed, raw output: %q", result.Output)
+	}
+	if result.Review.Verdict != VerdictApprove {
+		t.Errorf("verdict = %q, want %q", result.Review.Verdict, VerdictApprove)
+	}
+	if result.CostUSD != 0.0123 {
+		t.Errorf("CostUSD = %v, want 0.0123", result.CostUSD)
+	}
+
+	waitForGoroutines(t, before)
+}
+
+func TestRunReview_TimeoutIsReportedAndLeavesNothingRunning(t *testing.T) {
+	useFakeClaude(t, "slow")
+	before := runtime.NumGoroutine()
+
+	result := RunReview(context.Background(), t.TempDir(), "review this", "", "", 200*time.Millisecond)
+
+	if result.Error == nil {
+		t.Fatal("expected a timeout error, got none")
+	}
+	if !strings.Contains(result.Error.Error(), "timed out") {
+		t.Errorf("error = %q, want it to say the review timed out", result.Error)
+	}
+
+	waitForGoroutines(t, before)
+}
+
+func TestRunReview_NonZeroExitCarriesStderr(t *testing.T) {
+	useFakeClaude(t, "fail")
+
+	result := RunReview(context.Background(), t.TempDir(), "review this", "", "", 30*time.Second)
+
+	if result.Error == nil {
+		t.Fatal("expected an error from a failing claude, got none")
+	}
+	if !strings.Contains(result.Error.Error(), "not authenticated") {
+		t.Errorf("error = %q, want it to carry claude's stderr", result.Error)
 	}
 }
 
