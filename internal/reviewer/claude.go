@@ -27,6 +27,7 @@ type ReviewParams struct {
 	Files    int
 	Adds     int
 	Dels     int
+	HeadOID  string // head commit the review is pinned to; omitted from the prompt when ""
 }
 
 type ReviewResult struct {
@@ -53,7 +54,11 @@ func BuildReviewPrompt(p ReviewParams) string {
 	fmt.Fprintf(&b, "Review pull request %s#%d\n", p.Repo, p.PRNumber)
 	fmt.Fprintf(&b, "Title: %s\n", p.PRTitle)
 	fmt.Fprintf(&b, "Author: @%s\n", p.PRAuthor)
-	fmt.Fprintf(&b, "Stats: %d files changed, %d additions, %d deletions\n\n", p.Files, p.Adds, p.Dels)
+	fmt.Fprintf(&b, "Stats: %d files changed, %d additions, %d deletions\n", p.Files, p.Adds, p.Dels)
+	if p.HeadOID != "" {
+		fmt.Fprintf(&b, "Head commit: %s (the review is posted against this commit)\n", p.HeadOID)
+	}
+	b.WriteString("\n")
 
 	b.WriteString("Instructions:\n")
 	b.WriteString("- Focus on correctness, error handling, performance, security, and conventions\n")
@@ -78,6 +83,14 @@ type FollowUpParams struct {
 	Dels           int
 	PreviousReview string
 	NewCommitCount int
+	// HeadOID is the commit this review is pinned to; PreviousHeadOID the one
+	// the previous review was written against. Either may be "" if unknown.
+	HeadOID         string
+	PreviousHeadOID string
+	// Rewritten means PreviousHeadOID is not in the PR's fetched history
+	// (force-push, rebase, or more than 100 commits since), so commits cannot
+	// be counted.
+	Rewritten bool
 }
 
 // BuildFollowUpPrompt builds a prompt for Claude to do a follow-up review.
@@ -90,11 +103,21 @@ func BuildFollowUpPrompt(p FollowUpParams) string {
 	fmt.Fprintf(&b, "Title: %s\n", p.PRTitle)
 	fmt.Fprintf(&b, "Author: @%s\n", p.PRAuthor)
 	fmt.Fprintf(&b, "Stats: %d files changed, %d additions, %d deletions\n", p.Files, p.Adds, p.Dels)
-	if p.NewCommitCount > 0 {
-		fmt.Fprintf(&b, "New activity: %d new commit(s) since last review\n\n", p.NewCommitCount)
-	} else {
-		b.WriteString("New activity: manual re-review requested\n\n")
+	switch {
+	case p.Rewritten:
+		b.WriteString("New activity: the previously reviewed commit is no longer in the PR's recent history (force-push, rebase, or more than 100 commits since)\n")
+	case p.NewCommitCount > 0:
+		fmt.Fprintf(&b, "New activity: %d new commit(s) since last review\n", p.NewCommitCount)
+	default:
+		b.WriteString("New activity: manual re-review requested\n")
 	}
+	if p.HeadOID != "" {
+		fmt.Fprintf(&b, "Head commit: %s (the review is posted against this commit)\n", p.HeadOID)
+	}
+	if p.PreviousHeadOID != "" {
+		fmt.Fprintf(&b, "Previous review was written against: %s\n", p.PreviousHeadOID)
+	}
+	b.WriteString("\n")
 
 	b.WriteString("## Previous Review\n\n")
 	b.WriteString(p.PreviousReview)
@@ -102,9 +125,12 @@ func BuildFollowUpPrompt(p FollowUpParams) string {
 
 	b.WriteString("## Instructions\n\n")
 	b.WriteString("This is a follow-up review. A previous review was already posted (shown above).\n")
-	if p.NewCommitCount > 0 {
+	switch {
+	case p.Rewritten:
+		b.WriteString("The commit that review covered is no longer in the PR's recent history: the branch was force-pushed or rebased, or more than 100 commits landed since. Review the full current diff, not only recent commits.\n\n")
+	case p.NewCommitCount > 0:
 		b.WriteString("The PR author has pushed new commits since that review.\n\n")
-	} else {
+	default:
 		b.WriteString("A re-review was requested manually; there may or may not be new commits since that review.\n\n")
 	}
 	b.WriteString("Your task:\n")

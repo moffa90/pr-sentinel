@@ -411,6 +411,9 @@ func TestMigrateAddsModelsColumn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReview on migrated row: %v", err)
 	}
+	if rec.HeadOID != "" {
+		t.Errorf("migrated row HeadOID = %q, want empty", rec.HeadOID)
+	}
 	if rec.Models != "" {
 		t.Errorf("migrated row Models = %q, want empty", rec.Models)
 	}
@@ -421,5 +424,26 @@ func TestMigrateAddsModelsColumn(t *testing.T) {
 	rec, err = s.GetReview("o/r", 2)
 	if err != nil || rec.Models != "claude-opus-5-5" {
 		t.Errorf("Models = %q, err = %v; want claude-opus-5-5", rec.Models, err)
+	}
+}
+
+func TestHeadOIDRoundTripAndSet(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.RecordReview(ReviewRecord{Repo: "o/r", PRNumber: 1, HeadOID: "abc", ReviewedAt: time.Now()}); err != nil {
+		t.Fatalf("RecordReview: %v", err)
+	}
+	rec, err := s.GetReview("o/r", 1)
+	if err != nil || rec.HeadOID != "abc" {
+		t.Fatalf("HeadOID = %q, err = %v", rec.HeadOID, err)
+	}
+	if err := s.SetHeadOID(rec.ID, "def"); err != nil {
+		t.Fatalf("SetHeadOID: %v", err)
+	}
+	if rec, _ = s.GetReview("o/r", 1); rec.HeadOID != "def" {
+		t.Errorf("after SetHeadOID = %q, want def", rec.HeadOID)
+	}
+	recent, _ := s.RecentReviews(1)
+	if len(recent) != 1 || recent[0].HeadOID != "def" {
+		t.Errorf("RecentReviews head = %+v", recent)
 	}
 }

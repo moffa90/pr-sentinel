@@ -486,3 +486,25 @@ func TestBuildFollowUpPrompt_ManualRereview(t *testing.T) {
 		t.Errorf("manual prompt should not claim new commits:\n%s", prompt)
 	}
 }
+
+func TestBuildFollowUpPrompt_OIDs(t *testing.T) {
+	rewritten := BuildFollowUpPrompt(FollowUpParams{Repo: "o/r", PRNumber: 1, HeadOID: "bbb", PreviousHeadOID: "aaa", Rewritten: true})
+	for _, want := range []string{"no longer in the PR's recent history", "Head commit: bbb", "written against: aaa", "full current diff"} {
+		if !strings.Contains(rewritten, want) {
+			t.Errorf("rewritten prompt missing %q:\n%s", want, rewritten)
+		}
+	}
+	if strings.Contains(rewritten, "manual re-review") {
+		t.Error("rewritten prompt must not say manual re-review")
+	}
+
+	pushed := BuildFollowUpPrompt(FollowUpParams{Repo: "o/r", PRNumber: 1, NewCommitCount: 2, HeadOID: "ccc"})
+	if !strings.Contains(pushed, "2 new commit(s)") || !strings.Contains(pushed, "Head commit: ccc") {
+		t.Errorf("pushed prompt:\n%s", pushed)
+	}
+
+	initial := BuildReviewPrompt(ReviewParams{Repo: "o/r", PRNumber: 1, HeadOID: "ddd"})
+	if !strings.Contains(initial, "Head commit: ddd") {
+		t.Errorf("review prompt missing head:\n%s", initial)
+	}
+}

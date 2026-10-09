@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -129,9 +131,55 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 			continue
 		}
 
+		// Every open PR goes through one decision: GitHub's view (did
+		// pr-sentinel review it, against which commit) and the stored one.
+		type candidate struct {
+			pr github.PullRequest
+			fu *github.FollowUpCandidate
+		}
+		var candidates []candidate
 		for _, pr := range prs {
+			candidates = append(candidates, candidate{pr: pr})
+		}
+		for i := range followUpCandidates {
+			candidates = append(candidates, candidate{pr: followUpCandidates[i].PullRequest, fu: &followUpCandidates[i]})
+		}
+
+		for _, c := range candidates {
 			if ctx.Err() != nil {
 				break
+			}
+			pr := c.pr
+
+			rec, err := store.GetReview(repo.Name, pr.Number)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				slog.Error("failed to check review state", "repo", repo.Name, "pr", pr.Number, "error", err)
+				result.Errors++
+				continue
+			}
+			var recPtr *state.ReviewRecord
+			if err == nil {
+				recPtr = &rec
+			}
+
+			var plan reviewPlan
+			if c.fu != nil {
+				plan = planForCandidate(recPtr, *c.fu)
+			} else {
+				plan = planUnreviewedOnGitHub(recPtr, pr)
+			}
+
+			if plan.kind == planSkip {
+				if plan.adoptBaseline && recPtr != nil && pr.HeadOID != "" {
+					if err := store.SetHeadOID(recPtr.ID, pr.HeadOID); err != nil {
+						slog.Error("failed to record baseline head", "repo", repo.Name, "pr", pr.Number, "error", err)
+					} else {
+						slog.Info("adopted current head as reviewed baseline", "repo", repo.Name, "pr", pr.Number, "head", pr.HeadOID)
+					}
+				}
+				slog.Debug("no new work, skipping", "repo", repo.Name, "pr", pr.Number, "reason", plan.reason)
+				result.Skipped++
+				continue
 			}
 
 			if shouldSkip(opts, cycleCount, dailyCount) {
@@ -140,80 +188,49 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 				continue
 			}
 
-			reviewed, err := store.HasReviewed(repo.Name, pr.Number)
-			if err != nil {
-				slog.Error("failed to check review state", "repo", repo.Name, "pr", pr.Number, "error", err)
-				result.Errors++
-				continue
-			}
-			if reviewed {
-				slog.Debug("already reviewed, skipping", "repo", repo.Name, "pr", pr.Number)
-				result.Skipped++
-				continue
+			var prompt string
+			if plan.kind == planNew {
+				prompt = reviewer.BuildReviewPrompt(reviewer.ReviewParams{
+					Repo:     repo.Name,
+					PRNumber: pr.Number,
+					PRTitle:  pr.Title,
+					PRAuthor: pr.Author,
+					Files:    pr.Files,
+					Adds:     pr.Additions,
+					Dels:     pr.Deletions,
+					HeadOID:  pr.HeadOID,
+				})
+			} else {
+				previousReview := ""
+				if recPtr != nil {
+					previousReview = recPtr.ReviewOutput
+				}
+				prompt = reviewer.BuildFollowUpPrompt(reviewer.FollowUpParams{
+					Repo:            repo.Name,
+					PRNumber:        pr.Number,
+					PRTitle:         pr.Title,
+					PRAuthor:        pr.Author,
+					Files:           pr.Files,
+					Adds:            pr.Additions,
+					Dels:            pr.Deletions,
+					PreviousReview:  previousReview,
+					NewCommitCount:  plan.newCommits,
+					HeadOID:         pr.HeadOID,
+					PreviousHeadOID: plan.prevOID,
+					Rewritten:       plan.rewritten,
+				})
+				slog.Info("queued follow-up review", "repo", repo.Name, "pr", pr.Number,
+					"new_commits", plan.newCommits, "rewritten", plan.rewritten,
+					"reviewed", plan.prevOID, "head", pr.HeadOID)
 			}
 
-			prompt := reviewer.BuildReviewPrompt(reviewer.ReviewParams{
-				Repo:     repo.Name,
-				PRNumber: pr.Number,
-				PRTitle:  pr.Title,
-				PRAuthor: pr.Author,
-				Files:    pr.Files,
-				Adds:     pr.Additions,
-				Dels:     pr.Deletions,
-			})
-
-			repoPath := config.ExpandPath(repo.Path)
 			work = append(work, reviewWork{
 				repo:     repo,
 				pr:       pr,
 				prompt:   prompt,
-				repoPath: repoPath,
+				repoPath: config.ExpandPath(repo.Path),
 			})
 
-			cycleCount++
-			dailyCount++
-		}
-
-		// Collect follow-up work items (PRs with new commits since the last review)
-		for _, candidate := range followUpCandidates {
-			if ctx.Err() != nil {
-				break
-			}
-
-			if shouldSkip(opts, cycleCount, dailyCount) {
-				slog.Info("review limit reached, skipping follow-up", "repo", repo.Name, "pr", candidate.Number)
-				result.Skipped++
-				continue
-			}
-
-			// Get previous review from state store for follow-up context
-			previousReview := ""
-			prevRecord, prevErr := store.GetReview(repo.Name, candidate.Number)
-			if prevErr == nil {
-				previousReview = prevRecord.ReviewOutput
-			}
-
-			prompt := reviewer.BuildFollowUpPrompt(reviewer.FollowUpParams{
-				Repo:           repo.Name,
-				PRNumber:       candidate.Number,
-				PRTitle:        candidate.Title,
-				PRAuthor:       candidate.Author,
-				Files:          candidate.Files,
-				Adds:           candidate.Additions,
-				Dels:           candidate.Deletions,
-				PreviousReview: previousReview,
-				NewCommitCount: candidate.NewCommitCount,
-			})
-
-			repoPath := config.ExpandPath(repo.Path)
-			work = append(work, reviewWork{
-				repo:     repo,
-				pr:       candidate.PullRequest,
-				prompt:   prompt,
-				repoPath: repoPath,
-			})
-
-			slog.Info("queued follow-up review", "repo", repo.Name, "pr", candidate.Number, "new_commits", candidate.NewCommitCount)
 			cycleCount++
 			dailyCount++
 		}

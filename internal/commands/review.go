@@ -102,16 +102,27 @@ func runReview(cmd *cobra.Command, args []string) error {
 	var prompt string
 	if prev, prevErr := store.GetReview(repo, pr.Number); prevErr == nil {
 		fmt.Printf("%s Previously reviewed %s, running follow-up review\n", ui.IconDot, prev.ReviewedAt.Local().Format("2006-01-02 15:04"))
-		prompt = reviewer.BuildFollowUpPrompt(reviewer.FollowUpParams{
-			Repo:           repo,
-			PRNumber:       pr.Number,
-			PRTitle:        pr.Title,
-			PRAuthor:       pr.Author,
-			Files:          pr.Files,
-			Adds:           pr.Additions,
-			Dels:           pr.Deletions,
-			PreviousReview: prev.ReviewOutput,
-		})
+		params := reviewer.FollowUpParams{
+			Repo:            repo,
+			PRNumber:        pr.Number,
+			PRTitle:         pr.Title,
+			PRAuthor:        pr.Author,
+			Files:           pr.Files,
+			Adds:            pr.Additions,
+			Dels:            pr.Deletions,
+			PreviousReview:  prev.ReviewOutput,
+			HeadOID:         pr.HeadOID,
+			PreviousHeadOID: prev.HeadOID,
+		}
+		switch {
+		case prev.HeadOID == "" || pr.HeadOID == "":
+			// Commit unknown: a manual re-review, as before.
+		case prev.HeadOID == pr.HeadOID:
+			fmt.Printf("  %s No new commits since that review; re-reviewing anyway\n", ui.IconDot)
+		default:
+			_, params.NewCommitCount, params.Rewritten = ghclient.CommitsSince(pr.CommitOIDs, prev.HeadOID)
+		}
+		prompt = reviewer.BuildFollowUpPrompt(params)
 	} else {
 		prompt = reviewer.BuildReviewPrompt(reviewer.ReviewParams{
 			Repo:     repo,
@@ -121,6 +132,7 @@ func runReview(cmd *cobra.Command, args []string) error {
 			Files:    pr.Files,
 			Adds:     pr.Additions,
 			Dels:     pr.Deletions,
+			HeadOID:  pr.HeadOID,
 		})
 	}
 
