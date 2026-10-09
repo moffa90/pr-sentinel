@@ -81,8 +81,19 @@ type PRFetcher interface {
 	FetchOpenPRs(repo string, githubUser string, reviewOwnPRs bool) ([]github.PullRequest, []github.FollowUpCandidate, error)
 }
 
+// DiffFingerprinter is optionally implemented by a PRFetcher to fingerprint a
+// PR's diff at an exact commit. Without it, unchanged-diff detection is off.
+type DiffFingerprinter interface {
+	PatchID(repo, baseRef, headOID string) (string, error)
+}
+
 // GitHubPRFetcher is the production implementation that calls the gh CLI.
 type GitHubPRFetcher struct{}
+
+// PatchID fingerprints the PR diff at headOID through the compare API.
+func (g GitHubPRFetcher) PatchID(repo, baseRef, headOID string) (string, error) {
+	return github.DiffPatchID(repo, baseRef, headOID)
+}
 
 func (g GitHubPRFetcher) FetchOpenPRs(repo string, githubUser string, reviewOwnPRs bool) ([]github.PullRequest, []github.FollowUpCandidate, error) {
 	return github.FetchOpenPRs(repo, githubUser, reviewOwnPRs)
@@ -202,6 +213,33 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 				slog.Debug("not retrying this head yet", "repo", repo.Name, "pr", pr.Number, "head", pr.HeadOID, "reason", why)
 				result.Skipped++
 				continue
+			}
+
+			// Skip a head whose change is identical to what was reviewed: a
+			// rebase onto a moved base, a restack, or an "Update branch"
+			// merge. Checked before the budget so a skip costs nothing.
+			if fp, ok := fetcher.(DiffFingerprinter); ok && pr.HeadOID != "" && pr.BaseRef != "" {
+				patchID, err := fp.PatchID(repo.Name, pr.BaseRef, pr.HeadOID)
+				switch {
+				case err != nil:
+					slog.Warn("could not fingerprint diff, reviewing anyway", "repo", repo.Name, "pr", pr.Number, "error", err)
+				case patchID == "":
+					slog.Info("empty diff, skipping", "repo", repo.Name, "pr", pr.Number, "head", pr.HeadOID)
+					result.Skipped++
+					continue
+				case plan.kind == planFollowUp && recPtr != nil && recPtr.PatchID == patchID:
+					// Record the new head as reviewed so later cycles skip it
+					// without fetching the diff again.
+					if err := store.SetHeadOID(recPtr.ID, pr.HeadOID); err != nil {
+						slog.Error("failed to record equivalent head", "repo", repo.Name, "pr", pr.Number, "error", err)
+					}
+					slog.Info("same change as the reviewed commit, skipping", "repo", repo.Name, "pr", pr.Number,
+						"reviewed", plan.prevOID, "head", pr.HeadOID, "patch_id", patchID)
+					result.Skipped++
+					continue
+				default:
+					pr.PatchID = patchID
+				}
 			}
 
 			if shouldSkip(opts, cycleCount, dailyCount) {

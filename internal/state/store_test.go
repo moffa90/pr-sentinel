@@ -414,6 +414,9 @@ func TestMigrateAddsModelsColumn(t *testing.T) {
 	if rec.HeadOID != "" {
 		t.Errorf("migrated row HeadOID = %q, want empty", rec.HeadOID)
 	}
+	if rec.PatchID != "" {
+		t.Errorf("migrated row PatchID = %q, want empty", rec.PatchID)
+	}
 	if rec.Models != "" {
 		t.Errorf("migrated row Models = %q, want empty", rec.Models)
 	}
@@ -429,12 +432,12 @@ func TestMigrateAddsModelsColumn(t *testing.T) {
 
 func TestHeadOIDRoundTripAndSet(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.RecordReview(ReviewRecord{Repo: "o/r", PRNumber: 1, HeadOID: "abc", ReviewedAt: time.Now()}); err != nil {
+	if err := s.RecordReview(ReviewRecord{Repo: "o/r", PRNumber: 1, HeadOID: "abc", PatchID: "p", ReviewedAt: time.Now()}); err != nil {
 		t.Fatalf("RecordReview: %v", err)
 	}
 	rec, err := s.GetReview("o/r", 1)
-	if err != nil || rec.HeadOID != "abc" {
-		t.Fatalf("HeadOID = %q, err = %v", rec.HeadOID, err)
+	if err != nil || rec.HeadOID != "abc" || rec.PatchID != "p" {
+		t.Fatalf("HeadOID = %q PatchID = %q, err = %v", rec.HeadOID, rec.PatchID, err)
 	}
 	if err := s.SetHeadOID(rec.ID, "def"); err != nil {
 		t.Fatalf("SetHeadOID: %v", err)

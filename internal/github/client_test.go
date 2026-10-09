@@ -839,3 +839,22 @@ func TestIsSentinelReview(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePatchID(t *testing.T) {
+	if got := parsePatchID("8d40e6b0db060aef85b13fb00a1ca3ff6d0c8508 0000000000000000000000000000000000000000\n"); got != "8d40e6b0db060aef85b13fb00a1ca3ff6d0c8508" {
+		t.Errorf("got %q", got)
+	}
+	if got := parsePatchID(""); got != "" {
+		t.Errorf("empty diff: got %q, want empty", got)
+	}
+}
+
+func TestBaseRefIsFetched(t *testing.T) {
+	if !strings.Contains(prQuery, "baseRefName") || !strings.Contains(prViewFields, "baseRefName") {
+		t.Error("baseRefName must be fetched by both the poll query and GetPR")
+	}
+	pr, err := parsePRView([]byte(`{"number":1,"baseRefName":"main","headRefOid":"h"}`), "o/r")
+	if err != nil || pr.BaseRef != "main" {
+		t.Errorf("BaseRef = %q, err = %v", pr.BaseRef, err)
+	}
+}

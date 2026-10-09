@@ -92,6 +92,13 @@ func runReview(cmd *cobra.Command, args []string) error {
 		fmt.Println(ui.MutedStyle.Render("  Note: PR is a draft (the daemon skips drafts)."))
 	}
 
+	// Fingerprint the diff so the daemon can recognise this change later.
+	if pr.BaseRef != "" && pr.HeadOID != "" {
+		if id, err := ghclient.DiffPatchID(repo, pr.BaseRef, pr.HeadOID); err == nil {
+			pr.PatchID = id
+		}
+	}
+
 	store, err := state.Open(state.DefaultDBPath())
 	if err != nil {
 		return fmt.Errorf("opening state store: %w", err)

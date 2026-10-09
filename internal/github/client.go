@@ -46,8 +46,9 @@ type graphQLPullRequest struct {
 	Author struct {
 		Login string `json:"login"`
 	} `json:"author"`
-	HeadRefOID string `json:"headRefOid"`
-	Reviews    struct {
+	HeadRefOID  string `json:"headRefOid"`
+	BaseRefName string `json:"baseRefName"`
+	Reviews     struct {
 		Nodes []struct {
 			Author struct {
 				Login string `json:"login"`
@@ -105,6 +106,7 @@ const prQuery = `query($owner: String!, $name: String!, $author: String) {
         }
         author { login }
         headRefOid
+        baseRefName
         reviews(last: 20, author: $author, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
           nodes {
             author { login }
@@ -215,6 +217,7 @@ func parseGraphQLResponse(data []byte, repo string, githubUser string, reviewOwn
 		}
 
 		pr.HeadOID = node.HeadRefOID
+		pr.BaseRef = node.BaseRefName
 		for _, c := range node.Commits.Nodes {
 			pr.CommitOIDs = append(pr.CommitOIDs, c.Commit.OID)
 		}
@@ -499,13 +502,14 @@ type prViewJSON struct {
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
-	HeadRefOID string `json:"headRefOid"`
-	Commits    []struct {
+	HeadRefOID  string `json:"headRefOid"`
+	BaseRefName string `json:"baseRefName"`
+	Commits     []struct {
 		OID string `json:"oid"`
 	} `json:"commits"`
 }
 
-const prViewFields = "number,title,url,isDraft,additions,deletions,changedFiles,author,labels,headRefOid,commits"
+const prViewFields = "number,title,url,isDraft,additions,deletions,changedFiles,author,labels,headRefOid,baseRefName,commits"
 
 // GetPR fetches a single PR's metadata via `gh pr view`.
 func GetPR(repo string, number int64) (PullRequest, error) {
@@ -551,6 +555,7 @@ func parsePRView(data []byte, repo string) (PullRequest, error) {
 		pr.Labels = append(pr.Labels, l.Name)
 	}
 	pr.HeadOID = v.HeadRefOID
+	pr.BaseRef = v.BaseRefName
 	for _, c := range v.Commits {
 		pr.CommitOIDs = append(pr.CommitOIDs, c.OID)
 	}
