@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,6 +199,7 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("reading config file: %w", err)
 	}
+	restrictPermissions(expanded)
 
 	cfg := DefaultConfig()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
@@ -209,6 +211,21 @@ func Load(path string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// restrictPermissions tightens a config file readable by group or others to
+// 0600, since it can hold webhook URLs. A file edited by hand or by a script
+// keeps whatever mode it had, so this runs on every load.
+func restrictPermissions(path string) {
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm()&0o077 == 0 {
+		return
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		slog.Warn("config file is readable by other users and could not be restricted", "path", path, "mode", info.Mode().Perm(), "error", err)
+		return
+	}
+	slog.Warn("config file was readable by other users, restricted to 0600", "path", path, "previous_mode", info.Mode().Perm())
 }
 
 // Validate checks that config values are sane and returns an error describing
@@ -282,6 +299,10 @@ func Save(cfg Config, path string) error {
 
 	if err := os.WriteFile(expanded, data, 0o600); err != nil {
 		return fmt.Errorf("writing config file: %w", err)
+	}
+	// WriteFile's mode only applies on create; tighten a file that already existed.
+	if err := os.Chmod(expanded, 0o600); err != nil {
+		return fmt.Errorf("restricting config file permissions: %w", err)
 	}
 
 	return nil

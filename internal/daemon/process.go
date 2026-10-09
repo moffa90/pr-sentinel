@@ -162,6 +162,13 @@ func autoMerge(gh GitHubActions, repo config.RepoConfig, pr github.PullRequest, 
 
 	if repo.AutoMerge.RequireLabel != "" && !hasLabel(pr.Labels, repo.AutoMerge.RequireLabel) {
 		slog.Info("auto-merge skipped due to missing label", "repo", repo.Name, "pr", pr.Number, "required_label", repo.AutoMerge.RequireLabel)
+		// Make sure the label exists so a human can apply it; otherwise the
+		// gate can never open.
+		if repo.Mode == config.ModeLive {
+			if err := gh.EnsureLabel(repo.Name, repo.AutoMerge.RequireLabel); err != nil {
+				slog.Warn("could not create auto-merge label", "repo", repo.Name, "label", repo.AutoMerge.RequireLabel, "error", err)
+			}
+		}
 		return fmt.Sprintf("Skipped (missing label %q)", repo.AutoMerge.RequireLabel)
 	}
 
