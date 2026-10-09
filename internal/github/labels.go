@@ -40,6 +40,16 @@ func EnsureLabel(repo string, name string) error {
 	return nil
 }
 
+// IsLabelMissingError reports whether a gh error says a label does not exist,
+// e.g. `could not add label: 'pr-sentinel' not found`.
+func IsLabelMissingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "label") && strings.Contains(msg, "not found")
+}
+
 // isLabelExistsError reports whether gh refused because the label exists, e.g.
 // `label with name "x" already exists; use --force to update its color and description`.
 func isLabelExistsError(stderr string) bool {

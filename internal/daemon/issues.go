@@ -224,10 +224,11 @@ func handleIssues(store *state.Store, gh GitHubActions, repo config.RepoConfig, 
 	title, body := buildIssueTitle(pr), buildIssueBody(pr, findings, false)
 	labels := usableLabels(gh, repo.Name, repo.Issues.Labels)
 	number, url, err := gh.CreateIssue(repo.Name, title, body, labels)
-	if err != nil && url == "" && len(labels) > 0 {
-		// A cached label may have been deleted since; gh refuses the whole
-		// issue then. Forget the cache so the next issue re-creates the label,
-		// and retry this one without labels rather than lose it.
+	if err != nil && url == "" && len(labels) > 0 && github.IsLabelMissingError(err) {
+		// A cached label was deleted since; gh refuses the whole issue then.
+		// Forget the cache so the next issue re-creates the label, and retry
+		// this one without labels rather than lose it. Only for this error: a
+		// retry after a timeout could duplicate an issue GitHub already made.
 		slog.Warn("issue create failed with labels, retrying without", "repo", repo.Name, "pr", pr.Number, "labels", labels, "error", err)
 		forgetLabels(repo.Name, labels)
 		number, url, err = gh.CreateIssue(repo.Name, title, body, nil)

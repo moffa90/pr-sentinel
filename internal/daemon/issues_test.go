@@ -213,6 +213,16 @@ func TestHandleIssues(t *testing.T) {
 		}
 	})
 
+	t.Run("other create errors are not retried", func(t *testing.T) {
+		store, gh := testStore(t), &mockGitHub{createErr: errors.New("HTTP 502: Bad Gateway")}
+		if got := handleIssues(store, gh, liveRepo, pr, high); !strings.HasPrefix(got, "Failed:") {
+			t.Errorf("status = %q, want Failed", got)
+		}
+		if gh.created != 0 {
+			t.Errorf("created = %d, want 0 (no retry)", gh.created)
+		}
+	})
+
 	t.Run("fresh claim elsewhere skips", func(t *testing.T) {
 		store, gh := testStore(t), &mockGitHub{}
 		if claimed, _ := store.ClaimIssue("o/r", 5, time.Hour); !claimed {

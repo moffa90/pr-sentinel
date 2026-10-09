@@ -1,6 +1,9 @@
 package github
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestParseIssueURL(t *testing.T) {
 	tests := []struct {
@@ -58,6 +61,23 @@ func TestIsLabelExistsError(t *testing.T) {
 	for _, tt := range tests {
 		if got := isLabelExistsError(tt.stderr); got != tt.want {
 			t.Errorf("isLabelExistsError(%q) = %v, want %v", tt.stderr, got, tt.want)
+		}
+	}
+}
+
+func TestIsLabelMissingError(t *testing.T) {
+	tests := []struct {
+		err  error
+		want bool
+	}{
+		{errors.New("gh issue create o/r failed: could not add label: 'pr-sentinel' not found: exit status 1"), true},
+		{errors.New("gh issue create o/r failed: HTTP 404: Not Found"), false},
+		{errors.New("gh issue create o/r failed: HTTP 502: Bad Gateway"), false},
+		{nil, false},
+	}
+	for _, tt := range tests {
+		if got := IsLabelMissingError(tt.err); got != tt.want {
+			t.Errorf("IsLabelMissingError(%v) = %v, want %v", tt.err, got, tt.want)
 		}
 	}
 }
