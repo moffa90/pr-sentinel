@@ -2,6 +2,7 @@ package github
 
 import (
 	"testing"
+	"time"
 )
 
 const testGraphQLResponse = `{
@@ -115,9 +116,10 @@ func TestParseGraphQLResponse(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only PR #42 should be a new PR (not reviewed/commented by myuser)
-	if len(prs) != 1 {
-		t.Fatalf("expected 1 new PR, got %d", len(prs))
+	// #42 was never touched by myuser. #46 carries a comment from myuser but
+	// no review — and a comment is not a review, so #46 is new work too.
+	if len(prs) != 2 {
+		t.Fatalf("expected 2 new PRs, got %d", len(prs))
 	}
 
 	pr := prs[0]
@@ -149,8 +151,12 @@ func TestParseGraphQLResponse(t *testing.T) {
 		t.Errorf("expected 20 deletions, got %d", pr.Deletions)
 	}
 
-	// PR #44 reviewed by myuser but no new commits → skipped (no follow-up)
-	// PR #46 commented by myuser but no new commits → skipped (no follow-up)
+	if prs[1].Number != 46 {
+		t.Errorf("expected the commented-but-unreviewed PR #46 to be new, got #%d", prs[1].Number)
+	}
+
+	// #44 was reviewed by myuser with nothing committed since → no follow-up.
+	// #46 is counted above as new, not here.
 	if len(followUps) != 0 {
 		t.Errorf("expected 0 follow-up candidates, got %d", len(followUps))
 	}
@@ -237,16 +243,19 @@ func TestParseGraphQLResponse_FollowUp(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// PR #50 is new (no user activity)
-	if len(prs) != 1 {
-		t.Fatalf("expected 1 new PR, got %d", len(prs))
+	// #50 has no activity at all; #52 has a comment but no review. Neither has
+	// been reviewed, so both are new.
+	if len(prs) != 2 {
+		t.Fatalf("expected 2 new PRs, got %d", len(prs))
 	}
 	if prs[0].Number != 50 {
 		t.Errorf("expected PR #50, got #%d", prs[0].Number)
 	}
+	if prs[1].Number != 52 {
+		t.Errorf("expected PR #52, got #%d", prs[1].Number)
+	}
 
-	// PR #51 has review by myuser at 2026-03-12 and 2 commits after that
-	// PR #52 has comment by myuser at 2026-03-15 but no commits after that → skipped
+	// #51 was reviewed by myuser at 2026-03-12 with 2 commits after it.
 	if len(followUps) != 1 {
 		t.Fatalf("expected 1 follow-up candidate, got %d", len(followUps))
 	}
@@ -479,5 +488,80 @@ func TestParsePRView(t *testing.T) {
 
 	if _, err := parsePRView([]byte("not json"), "o/r"); err == nil {
 		t.Error("expected error for invalid JSON")
+	}
+}
+
+// testCommentAfterPushResponse reproduces Cellgain/spark-poc#60: a review,
+// then a commit, then a comment 28 seconds after the commit. While comments
+// counted toward the watermark, the comment landed after the commit and the
+// follow-up was skipped — permanently, since no later commit would ever come.
+const testCommentAfterPushResponse = `{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "nodes": [
+          {
+            "number": 60,
+            "title": "feat: name what changed, not just that something did",
+            "url": "https://github.com/owner/repo/pull/60",
+            "isDraft": false,
+            "createdAt": "2026-10-08T15:00:00Z",
+            "changedFiles": 12,
+            "additions": 900,
+            "deletions": 40,
+            "author": { "login": "myuser" },
+            "reviews": {
+              "nodes": [
+                { "author": { "login": "myuser" }, "publishedAt": "2026-10-08T16:17:53Z" }
+              ]
+            },
+            "comments": {
+              "nodes": [
+                { "author": { "login": "myuser" }, "createdAt": "2026-10-08T16:33:24Z" }
+              ]
+            },
+            "commits": {
+              "nodes": [
+                { "commit": { "oid": "0e5784e", "committedDate": "2026-10-08T16:16:18Z" } },
+                { "commit": { "oid": "f7a7d87", "committedDate": "2026-10-08T16:32:56Z" } }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}`
+
+func TestParseGraphQLResponse_CommentAfterPushStillFollowsUp(t *testing.T) {
+	prs, followUps, err := parseGraphQLResponse([]byte(testCommentAfterPushResponse), "owner/repo", "myuser", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(prs) != 0 {
+		t.Fatalf("expected no new PRs (it has been reviewed), got %d", len(prs))
+	}
+	if len(followUps) != 1 {
+		t.Fatalf("expected 1 follow-up candidate, got %d — a comment after the push must not hide it", len(followUps))
+	}
+
+	got := followUps[0]
+	if got.Number != 60 {
+		t.Errorf("expected PR #60, got #%d", got.Number)
+	}
+	if got.NewCommitCount != 1 {
+		t.Errorf("NewCommitCount = %d, want 1", got.NewCommitCount)
+	}
+	if got.NewCommitSince != "f7a7d87" {
+		t.Errorf("NewCommitSince = %q, want f7a7d87", got.NewCommitSince)
+	}
+
+	// The watermark must be the review, not the later comment. If this reads
+	// 16:33:24 the comment is being counted again and the bug is back.
+	wantReview := "2026-10-08T16:17:53Z"
+	if got.LastReviewAt.UTC().Format(time.RFC3339) != wantReview {
+		t.Errorf("LastReviewAt = %s, want %s (the review, not the comment)",
+			got.LastReviewAt.UTC().Format(time.RFC3339), wantReview)
 	}
 }

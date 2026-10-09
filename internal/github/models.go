@@ -21,7 +21,7 @@ type PullRequest struct {
 // but has new commits since the last comment.
 type FollowUpCandidate struct {
 	PullRequest
-	LastCommentAt  time.Time // when the user last commented/reviewed
-	NewCommitSince string    // OID of the first commit after LastCommentAt
-	NewCommitCount int       // how many commits are newer than LastCommentAt
+	LastReviewAt   time.Time // when the user last REVIEWED (comments do not count)
+	NewCommitSince string    // OID of the first commit after LastReviewAt
+	NewCommitCount int       // how many commits are newer than LastReviewAt
 }

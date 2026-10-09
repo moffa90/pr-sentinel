@@ -52,14 +52,6 @@ type graphQLPullRequest struct {
 			PublishedAt time.Time `json:"publishedAt"`
 		} `json:"nodes"`
 	} `json:"reviews"`
-	Comments struct {
-		Nodes []struct {
-			Author struct {
-				Login string `json:"login"`
-			} `json:"author"`
-			CreatedAt time.Time `json:"createdAt"`
-		} `json:"nodes"`
-	} `json:"comments"`
 	Commits struct {
 		Nodes []struct {
 			Commit struct {
@@ -93,12 +85,6 @@ const prQuery = `query($owner: String!, $name: String!) {
           nodes {
             author { login }
             publishedAt
-          }
-        }
-        comments(first: 50) {
-          nodes {
-            author { login }
-            createdAt
           }
         }
         commits(last: 100) {
@@ -195,34 +181,37 @@ func parseGraphQLResponse(data []byte, repo string, githubUser string, reviewOwn
 			pr.Labels = append(pr.Labels, l.Name)
 		}
 
-		// Find the latest time the user reviewed or commented
-		var lastUserActivity time.Time
+		// The watermark answers one question: has this PR been reviewed
+		// since its newest commit? Only a review answers it. pr-sentinel
+		// always publishes through `gh pr review`, never as a plain comment,
+		// so a comment is not evidence that anything was reviewed.
+		//
+		// Counting comments here is actively harmful on a PR you authored
+		// yourself (review_own_prs: true). Push a commit, then comment to
+		// explain the push, and the comment moves the watermark past your own
+		// commit — the follow-up review is then skipped for good, because no
+		// later commit will ever arrive. Cellgain/spark-poc#60 sat that way:
+		// review 16:17:53Z, commit 16:32:56Z, comment 16:33:24Z.
+		var lastReview time.Time
 		for _, review := range node.Reviews.Nodes {
 			if strings.EqualFold(review.Author.Login, githubUser) {
-				if review.PublishedAt.After(lastUserActivity) {
-					lastUserActivity = review.PublishedAt
-				}
-			}
-		}
-		for _, comment := range node.Comments.Nodes {
-			if strings.EqualFold(comment.Author.Login, githubUser) {
-				if comment.CreatedAt.After(lastUserActivity) {
-					lastUserActivity = comment.CreatedAt
+				if review.PublishedAt.After(lastReview) {
+					lastReview = review.PublishedAt
 				}
 			}
 		}
 
-		if lastUserActivity.IsZero() {
-			// User has never reviewed/commented — new PR
+		if lastReview.IsZero() {
+			// Never reviewed — new PR.
 			prs = append(prs, pr)
 			continue
 		}
 
-		// User has reviewed/commented — check for new commits since
+		// Reviewed before — re-review only if something landed since.
 		var newCommitSince string
 		newCommitCount := 0
 		for _, c := range node.Commits.Nodes {
-			if c.Commit.CommittedDate.After(lastUserActivity) {
+			if c.Commit.CommittedDate.After(lastReview) {
 				if newCommitCount == 0 {
 					newCommitSince = c.Commit.OID
 				}
@@ -233,12 +222,12 @@ func parseGraphQLResponse(data []byte, repo string, githubUser string, reviewOwn
 		if newCommitCount > 0 {
 			followUps = append(followUps, FollowUpCandidate{
 				PullRequest:    pr,
-				LastCommentAt:  lastUserActivity,
+				LastReviewAt:   lastReview,
 				NewCommitSince: newCommitSince,
 				NewCommitCount: newCommitCount,
 			})
 		}
-		// No new commits since last comment → skip entirely
+		// Nothing new since the last review → skip entirely
 	}
 
 	return prs, followUps, nil
