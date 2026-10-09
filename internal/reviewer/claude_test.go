@@ -2,6 +2,7 @@ package reviewer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -506,5 +507,18 @@ func TestBuildFollowUpPrompt_OIDs(t *testing.T) {
 	initial := BuildReviewPrompt(ReviewParams{Repo: "o/r", PRNumber: 1, HeadOID: "ddd"})
 	if !strings.Contains(initial, "Head commit: ddd") {
 		t.Errorf("review prompt missing head:\n%s", initial)
+	}
+}
+
+// The daemon tells a shutdown apart from a real failure with
+// errors.Is(err, context.Canceled), so the cancelled error must wrap it.
+func TestRunReview_CancelledWrapsContextCanceled(t *testing.T) {
+	useFakeClaude(t, "slow")
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	rr := RunReview(ctx, t.TempDir(), "p", "", "", time.Minute)
+	if !errors.Is(rr.Error, context.Canceled) {
+		t.Fatalf("error = %v, want it to wrap context.Canceled", rr.Error)
 	}
 }

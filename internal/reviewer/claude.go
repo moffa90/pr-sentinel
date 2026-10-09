@@ -235,7 +235,7 @@ func RunReviewWithModel(ctx context.Context, repoPath string, prompt string, glo
 			return ReviewResult{
 				Output:   outStr,
 				Duration: duration,
-				Error:    fmt.Errorf("review cancelled"),
+				Error:    fmt.Errorf("review cancelled: %w", ctx.Err()),
 			}
 		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

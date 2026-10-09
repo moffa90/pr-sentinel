@@ -137,7 +137,6 @@ func runReview(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := daemon.PollOptionsFromConfig(cfg)
-	opts.SkipDailyCount = true
 	if opts.ReviewTimeout == 0 {
 		opts.ReviewTimeout = reviewer.DefaultTimeout
 	}

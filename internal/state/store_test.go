@@ -447,3 +447,113 @@ func TestHeadOIDRoundTripAndSet(t *testing.T) {
 		t.Errorf("RecentReviews head = %+v", recent)
 	}
 }
+
+func TestReviewAttempts(t *testing.T) {
+	s := newTestStore(t)
+
+	if _, ok, err := s.GetAttempt("o/r", 1, "h"); ok || err != nil {
+		t.Fatalf("fresh: ok=%v err=%v", ok, err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.BeginAttempt("o/r", 1, "h"); err != nil {
+			t.Fatalf("BeginAttempt: %v", err)
+		}
+	}
+	if err := s.FinishAttempt("o/r", 1, "h", false, "timeout"); err != nil {
+		t.Fatalf("FinishAttempt: %v", err)
+	}
+	a, ok, err := s.GetAttempt("o/r", 1, "h")
+	if err != nil || !ok || a.Attempts != 2 || a.Succeeded || a.LastError != "timeout" {
+		t.Fatalf("after 2 begins + failure: %+v ok=%v err=%v", a, ok, err)
+	}
+	if time.Since(a.LastAttemptAt) > time.Minute {
+		t.Errorf("LastAttemptAt = %s", a.LastAttemptAt)
+	}
+
+	s.FinishAttempt("o/r", 1, "h", true, "ignored")
+	if a, _, _ = s.GetAttempt("o/r", 1, "h"); !a.Succeeded || a.LastError != "" {
+		t.Errorf("after success: %+v", a)
+	}
+
+	// Heads are independent.
+	if _, ok, _ := s.GetAttempt("o/r", 1, "other"); ok {
+		t.Error("other head should have no record")
+	}
+
+	// A failure re-stamps last_attempt_at, so backoff runs from the failure.
+	before := time.Now().Add(-time.Second)
+	if err := s.FinishAttempt("o/r", 1, "h", false, "again"); err != nil {
+		t.Fatal(err)
+	}
+	if a, _, _ = s.GetAttempt("o/r", 1, "h"); a.LastAttemptAt.Before(before.Truncate(time.Second)) {
+		t.Errorf("failure did not re-stamp last_attempt_at: %s", a.LastAttemptAt)
+	}
+}
+
+func TestRevertAttempt(t *testing.T) {
+	s := newTestStore(t)
+	for i := 0; i < 2; i++ {
+		if err := s.BeginAttempt("o/r", 1, "h"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.RevertAttempt("o/r", 1, "h"); err != nil {
+		t.Fatalf("RevertAttempt: %v", err)
+	}
+	if a, ok, _ := s.GetAttempt("o/r", 1, "h"); !ok || a.Attempts != 1 {
+		t.Errorf("after one revert: %+v ok=%v, want 1 attempt", a, ok)
+	}
+	if err := s.RevertAttempt("o/r", 1, "h"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.GetAttempt("o/r", 1, "h"); ok {
+		t.Error("a fully reverted, unsucceeded record should be gone")
+	}
+}
+
+func TestPruneAttemptsKeepsWhatProtects(t *testing.T) {
+	s := newTestStore(t)
+	mustBegin := func(pr int64, head string, n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			if err := s.BeginAttempt("o/r", pr, head); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mustBegin(1, "failed-once", 1)
+	mustBegin(2, "parked", 3)
+	mustBegin(3, "succeeded", 1)
+	if err := s.FinishAttempt("o/r", 3, "succeeded", true, ""); err != nil {
+		t.Fatal(err)
+	}
+	mustBegin(4, "parked-closed", 3)
+	if err := s.RecordReview(ReviewRecord{Repo: "o/r", PRNumber: 4, ReviewedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkPRClosed("o/r", 4); err != nil {
+		t.Fatal(err)
+	}
+
+	future := time.Now().Add(time.Hour) // every record is older than this cutoff
+	if err := s.PruneAttempts(future, time.Now().Add(-time.Hour), 3); err != nil {
+		t.Fatalf("PruneAttempts: %v", err)
+	}
+	for _, c := range []struct {
+		pr   int64
+		head string
+		keep bool
+	}{{1, "failed-once", false}, {2, "parked", true}, {3, "succeeded", true}, {4, "parked-closed", false}} {
+		if _, ok, _ := s.GetAttempt("o/r", c.pr, c.head); ok != c.keep {
+			t.Errorf("%s: kept=%v, want %v", c.head, ok, c.keep)
+		}
+	}
+
+	// Past the hard cutoff, everything goes.
+	if err := s.PruneAttempts(future, future, 3); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.GetAttempt("o/r", 2, "parked"); ok {
+		t.Error("hard cutoff should prune a parked record")
+	}
+}
