@@ -215,19 +215,30 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 				continue
 			}
 
+			// The budget is checked before fingerprinting: once it's spent,
+			// fetching diffs would only cost API calls. shouldSkip only reads
+			// the counters, so an identical-change skip still costs nothing.
+			if shouldSkip(opts, cycleCount, dailyCount) {
+				slog.Info("review limit reached, skipping", "repo", repo.Name, "pr", pr.Number)
+				result.Skipped++
+				continue
+			}
+
 			// Skip a head whose change is identical to what was reviewed: a
-			// rebase onto a moved base, a restack, or an "Update branch"
-			// merge. Checked before the budget so a skip costs nothing.
+			// rebase onto a moved base, a restack, or an "Update branch" merge.
 			if fp, ok := fetcher.(DiffFingerprinter); ok && pr.HeadOID != "" && pr.BaseRef != "" {
 				patchID, err := fp.PatchID(repo.Name, pr.BaseRef, pr.HeadOID)
 				switch {
 				case err != nil:
 					slog.Warn("could not fingerprint diff, reviewing anyway", "repo", repo.Name, "pr", pr.Number, "error", err)
 				case patchID == "":
-					slog.Info("empty diff, skipping", "repo", repo.Name, "pr", pr.Number, "head", pr.HeadOID)
+					slog.Debug("empty diff, skipping", "repo", repo.Name, "pr", pr.Number, "head", pr.HeadOID)
 					result.Skipped++
 					continue
-				case plan.kind == planFollowUp && recPtr != nil && recPtr.PatchID == patchID:
+				case plan.kind == planFollowUp && recPtr != nil && recPtr.HeadOID == plan.prevOID && recPtr.PatchID == patchID:
+					// Only against the stored review the follow-up is measured
+					// from; a newer review from another host has no stored
+					// fingerprint here.
 					// Record the new head as reviewed so later cycles skip it
 					// without fetching the diff again.
 					if err := store.SetHeadOID(recPtr.ID, pr.HeadOID); err != nil {
@@ -240,12 +251,6 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 				default:
 					pr.PatchID = patchID
 				}
-			}
-
-			if shouldSkip(opts, cycleCount, dailyCount) {
-				slog.Info("review limit reached, skipping", "repo", repo.Name, "pr", pr.Number)
-				result.Skipped++
-				continue
 			}
 
 			var prompt string

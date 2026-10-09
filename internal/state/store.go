@@ -532,8 +532,9 @@ func migrateAddHeadOIDColumn(db *sql.DB) error {
 	return err
 }
 
-// SetHeadOID records the head commit for a review row that predates head_oid,
-// so later cycles compare against it.
+// SetHeadOID sets the head commit a review row counts as covering. Used for a
+// row that predates head_oid (baseline adoption), and to mark a new head whose
+// diff is identical to the reviewed one as reviewed.
 func (s *Store) SetHeadOID(id int64, oid string) error {
 	_, err := s.db.Exec(`UPDATE reviewed_prs SET head_oid = ? WHERE id = ?`, oid, id)
 	return err

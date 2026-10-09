@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -94,7 +95,9 @@ func runReview(cmd *cobra.Command, args []string) error {
 
 	// Fingerprint the diff so the daemon can recognise this change later.
 	if pr.BaseRef != "" && pr.HeadOID != "" {
-		if id, err := ghclient.DiffPatchID(repo, pr.BaseRef, pr.HeadOID); err == nil {
+		if id, err := ghclient.DiffPatchID(repo, pr.BaseRef, pr.HeadOID); err != nil {
+			slog.Warn("could not fingerprint diff; the daemon may re-review this change after a rebase", "repo", repo, "pr", pr.Number, "error", err)
+		} else {
 			pr.PatchID = id
 		}
 	}

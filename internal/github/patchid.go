@@ -8,12 +8,12 @@ import (
 )
 
 // DiffPatchID fingerprints a PR's diff at an exact head commit: the
-// merge-base diff from baseRef to headOID (what the PR shows), hashed with
-// `git patch-id --stable`, which ignores line numbers and whitespace.
+// merge-base diff from baseRef to headOID (what the PR shows), hashed by
+// PatchIDOfDiff.
 //
 // Two heads with the same patch ID carry the same change. That is what a
 // rebase onto a moved base, a restack, or GitHub's "Update branch" merge
-// produces, and none of them needs a new paid review.
+// usually produces, and none of them needs a new paid review.
 //
 // The compare API is used rather than `gh pr diff`, which only shows the
 // current head: the fingerprint must belong to the commit being reviewed.
@@ -25,7 +25,7 @@ func DiffPatchID(repo, baseRef, headOID string) (string, error) {
 
 	diffCmd := exec.Command("gh", "api",
 		"-H", "Accept: application/vnd.github.diff",
-		fmt.Sprintf("repos/%s/compare/%s...%s", repo, baseRef, headOID),
+		fmt.Sprintf("repos/%s/compare/%s...%s", repo, escapeRef(baseRef), headOID),
 	)
 	var diffErr bytes.Buffer
 	diffCmd.Stderr = &diffErr
@@ -36,16 +36,36 @@ func DiffPatchID(repo, baseRef, headOID string) (string, error) {
 		}
 		return "", fmt.Errorf("fetching diff %s %s...%s: %w", repo, baseRef, shortOID(headOID), err)
 	}
+	return PatchIDOfDiff(diff)
+}
 
-	idCmd := exec.Command("git", "patch-id", "--stable")
-	idCmd.Stdin = bytes.NewReader(diff)
-	var idErr bytes.Buffer
-	idCmd.Stderr = &idErr
-	out, err := idCmd.Output()
+// PatchIDOfDiff hashes a diff with `git patch-id --verbatim` (git >= 2.39).
+//
+// --verbatim, not --stable: --stable also strips whitespace, so an
+// indentation-only change, which changes meaning in Python, YAML or a
+// Makefile, would match the reviewed fingerprint and never be reviewed.
+// Line numbers are still ignored, so moving the change in the file keeps its
+// fingerprint; context lines are hashed, so a base edit next to a hunk changes
+// it. On an older git this errors and the daemon reviews anyway (fails open).
+// Returns "" for an empty diff.
+func PatchIDOfDiff(diff []byte) (string, error) {
+	cmd := exec.Command("git", "patch-id", "--verbatim")
+	cmd.Stdin = bytes.NewReader(diff)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git patch-id: %s: %w", strings.TrimSpace(idErr.String()), err)
+		return "", fmt.Errorf("git patch-id --verbatim: %s: %w", strings.TrimSpace(stderr.String()), err)
 	}
 	return parsePatchID(string(out)), nil
+}
+
+// escapeRef escapes the characters git allows in a branch name that would
+// break a URL path. "/" stays: GitHub resolves slashed refs in compare paths.
+var refEscaper = strings.NewReplacer("%", "%25", "#", "%23", "?", "%3F")
+
+func escapeRef(ref string) string {
+	return refEscaper.Replace(ref)
 }
 
 // parsePatchID takes the patch ID from `git patch-id` output

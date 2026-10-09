@@ -33,7 +33,7 @@ pr-sentinel is a CLI daemon that polls GitHub for open PRs and reviews them usin
 - **`internal/github/client.go`** — GraphQL query via `gh api graphql` with `rateLimit` field. `FetchOpenPRs` returns two lists: PRs pr-sentinel hasn't reviewed on GitHub, and follow-up candidates (pr-sentinel's last review was written against a commit other than `headRefOid`). Each `PullRequest` carries `HeadOID` and `CommitOIDs`. Filters drafts, self-authored PRs. Fetches PR labels for auto-merge gating. `PostReview` accepts verdict and maps to `--approve`/`--comment`/`--request-changes` flags. `PostReviewAtCommit` posts through REST with `commit_id`, pinning the review to the polled head (`gh pr review` can't). `GetPRState` confirms PR closure via `gh pr view --json state`. `GetPR` fetches a single PR's metadata (title, author, stats, labels, URL) for the `review` command. Logs rate limit at debug level, warns when <20% remaining
 - **`internal/github/merge.go`** — `EnableAutoMerge` wraps `gh pr merge --auto` with configurable strategy (merge/squash/rebase) and `--delete-branch`. Uses GitHub's merge queue to defer merge until CI/branch protection passes
 - **`internal/github/labels.go`** — `EnsureLabel` runs `gh label create` without `--force`, so an existing label (and a color a team chose) is left alone; "already exists" counts as success
-- **`internal/github/patchid.go`** — `DiffPatchID` fingerprints a PR's diff at an exact commit: the compare API (`base...headOID`, diff media type) piped to `git patch-id --stable`. `gh pr diff` isn't used because it only shows the current head
+- **`internal/github/patchid.go`** — `DiffPatchID` fingerprints a PR's diff at an exact commit: the compare API (`base...headOID`, diff media type) piped to `git patch-id --verbatim` (`PatchIDOfDiff`; git ≥ 2.39). `--verbatim`, not `--stable`, which also strips whitespace and would treat an indentation-only change (meaningful in Python/YAML/Makefiles) as identical. `gh pr diff` isn't used because it only shows the current head
 - **`internal/github/issues.go`** — `CreateIssue` (`gh issue create`, body via stdin, returns number+URL), `CommentOnIssue` and `GetIssueState` (take an issue number or URL)
 - **`internal/daemon/process.go`** — `ProcessReview` holds every post-review step shared by the daemon and the `review` command: publish with verdict-aware review via `--approve`/`--comment`/`--request-changes` (falls back to `--comment` on self-authored PRs), auto-merge on approval with finding gate, issues, record, notify per-repo + global. `ReviewBody` renders the formatted markdown body. All GitHub writes go through the `GitHubActions` interface (`GitHubCLI` in production); `ProcessReviewWith` accepts a mock for tests. Add new post-review behavior here so both paths stay identical
 - **`internal/daemon/issues.go`** — `handleIssues` runs in phase 3 after publish. Filters findings by `issues.min_severity`, creates one issue per PR, or comments on the existing one for follow-up reviews. Only for `approve` verdicts. Opens a new issue if the existing one is closed. Claims the row before creating, records the URL even when the issue number can't be parsed (gh accepts either), and retries the state write, to avoid duplicates
@@ -84,14 +84,14 @@ Each model run costs money whether or not it succeeds, so the daemon budgets run
 
 ### Unchanged diffs
 
-A new head doesn't always mean a new change. Before paying for a review (after the attempt gate, before the budget), the daemon fingerprints the diff at the polled head (`DiffPatchID`, via the optional `DiffFingerprinter` interface on the fetcher):
+A new head doesn't always mean a new change. Before paying for a review (after the attempt gate and the budget check, so a spent budget fetches no diffs), the daemon fingerprints the diff at the polled head (`DiffPatchID`, via the optional `DiffFingerprinter` interface on the fetcher):
 
-- **Same fingerprint as the stored review** (`patch_id`) on a follow-up: the change is identical, so the new head is recorded as reviewed (`SetHeadOID`) and skipped. Later cycles skip it without fetching the diff again.
-- **Empty diff:** skipped.
-- **Fingerprint error** (e.g. diff too large for the compare API): reviewed anyway; dedupe fails open.
+- **Same fingerprint as the stored review** (`patch_id`, only when that review is the one the follow-up is measured from) on a follow-up: the change is identical, so the new head is recorded as reviewed (`SetHeadOID`) and skipped. Later cycles skip it without fetching the diff again.
+- **Empty diff:** skipped (logged at debug; rechecked each cycle while open).
+- **Fingerprint error** (e.g. diff too large for the compare API, or git older than 2.39 without `--verbatim`): reviewed anyway; dedupe fails open.
 - No stored fingerprint (older reviews): reviewed normally, and the fingerprint is stored from then on.
 
-`git patch-id --stable` ignores line numbers but not context lines. Verified: a rebase or "Update branch" merge whose base changes are in other files, or away from the PR's hunks, keeps the fingerprint; a base change within a hunk's 3 context lines changes it, so that PR is re-reviewed (its surrounding code did change). The `review` command stores the fingerprint too.
+`git patch-id --verbatim` ignores line numbers but not context lines or whitespace. Verified: a rebase or "Update branch" merge whose base changes are in other files, or away from the PR's hunks, keeps the fingerprint; a base change within a hunk's 3 context lines changes it, so that PR is re-reviewed (its surrounding code did change). The `review` command stores the fingerprint too.
 
 ### Follow-up detection
 
