@@ -580,23 +580,61 @@ func (s *Store) BeginAttempt(repo string, prNumber int64, headOID string) error 
 }
 
 // FinishAttempt records the outcome of the latest attempt. errMsg is ignored
-// on success.
+// on success. A failure also re-stamps last_attempt_at, so backoff is measured
+// from when the run failed, not from when it started (a timeout can take as
+// long as the backoff itself).
 func (s *Store) FinishAttempt(repo string, prNumber int64, headOID string, success bool, errMsg string) error {
-	succeeded := 0
 	if success {
-		succeeded = 1
-		errMsg = ""
+		_, err := s.db.Exec(
+			`UPDATE review_attempts SET succeeded = 1, last_error = ''
+			 WHERE repo = ? AND pr_number = ? AND head_oid = ?`,
+			repo, prNumber, headOID,
+		)
+		return err
 	}
 	_, err := s.db.Exec(
-		`UPDATE review_attempts SET succeeded = ?, last_error = ?
+		`UPDATE review_attempts SET succeeded = 0, last_error = ?, last_attempt_at = ?
 		 WHERE repo = ? AND pr_number = ? AND head_oid = ?`,
-		succeeded, errMsg, repo, prNumber, headOID,
+		errMsg, time.Now().UTC().Format(time.RFC3339), repo, prNumber, headOID,
 	)
 	return err
 }
 
-// PruneAttempts deletes attempt records last touched before cutoff.
-func (s *Store) PruneAttempts(cutoff time.Time) error {
-	_, err := s.db.Exec(`DELETE FROM review_attempts WHERE last_attempt_at < ?`, cutoff.UTC().Format(time.RFC3339))
+// RevertAttempt undoes one BeginAttempt, for a run interrupted by shutdown:
+// the run still counted toward the daily budget, but it says nothing about
+// whether the PR can be reviewed, so it must not move it toward being parked.
+func (s *Store) RevertAttempt(repo string, prNumber int64, headOID string) error {
+	if _, err := s.db.Exec(
+		`UPDATE review_attempts SET attempts = attempts - 1
+		 WHERE repo = ? AND pr_number = ? AND head_oid = ? AND attempts > 0`,
+		repo, prNumber, headOID,
+	); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(
+		`DELETE FROM review_attempts
+		 WHERE repo = ? AND pr_number = ? AND head_oid = ? AND attempts = 0 AND succeeded = 0`,
+		repo, prNumber, headOID,
+	)
+	return err
+}
+
+// PruneAttempts deletes attempt records not touched since cutoff that no
+// longer protect anything: plain failures still below parkAt attempts, and any
+// record for a PR the store has seen closed. Succeeded and parked records on
+// open PRs are kept, or a 30-day-idle PR would get paid runs again. Anything
+// older than hardCutoff goes regardless, so the table can't grow without bound.
+func (s *Store) PruneAttempts(cutoff, hardCutoff time.Time, parkAt int) error {
+	_, err := s.db.Exec(
+		`DELETE FROM review_attempts
+		 WHERE last_attempt_at < ? AND (
+		   (succeeded = 0 AND attempts < ?)
+		   OR EXISTS (SELECT 1 FROM reviewed_prs r
+		              WHERE r.repo = review_attempts.repo AND r.pr_number = review_attempts.pr_number
+		                AND r.closed_at != '')
+		   OR last_attempt_at < ?
+		 )`,
+		cutoff.UTC().Format(time.RFC3339), parkAt, hardCutoff.UTC().Format(time.RFC3339),
+	)
 	return err
 }

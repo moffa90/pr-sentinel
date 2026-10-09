@@ -16,8 +16,11 @@ const (
 	// attemptBackoff is the wait after the first failure; it doubles after
 	// each further one (10m, 20m).
 	attemptBackoff = 10 * time.Minute
-	// attemptRetention is how long attempt records are kept.
-	attemptRetention = 30 * 24 * time.Hour
+	// attemptRetention is how long an attempt record that protects nothing is
+	// kept; attemptHardRetention bounds every record, even a parked or
+	// succeeded one on a PR that never closes.
+	attemptRetention     = 30 * 24 * time.Hour
+	attemptHardRetention = 180 * 24 * time.Hour
 )
 
 // attemptGate reports whether the daemon may run the model for a head now,
@@ -31,6 +34,9 @@ func attemptGate(a state.Attempt, found bool, now time.Time) (bool, string) {
 		// The review was posted; even if recording it failed, never pay for
 		// the same head twice.
 		return false, "already reviewed this head"
+	}
+	if a.Attempts < 1 {
+		return true, "" // a record with no attempts counts as never tried
 	}
 	if a.Attempts >= maxAttemptsPerHead {
 		return false, fmt.Sprintf("parked after %d failed attempts", a.Attempts)

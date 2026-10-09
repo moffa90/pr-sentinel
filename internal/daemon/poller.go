@@ -30,7 +30,7 @@ type PollOptions struct {
 	Model              reviewer.ModelOptions
 	// SkipDailyCount is kept for compatibility and has no effect: the daemon
 	// now counts each model run when it starts (failed runs cost money too),
-	// and ProcessReview no longer counts, so manual reviews never did use the
+	// and ProcessReview no longer counts, so manual reviews don't use the
 	// daemon's budget.
 	//
 	// Deprecated: no longer read.
@@ -120,7 +120,8 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 	var result PollResult
 	cycleCount := 0
 
-	if err := store.PruneAttempts(time.Now().Add(-attemptRetention)); err != nil {
+	now := time.Now()
+	if err := store.PruneAttempts(now.Add(-attemptRetention), now.Add(-attemptHardRetention), maxAttemptsPerHead); err != nil {
 		slog.Warn("failed to prune old review attempts", "error", err)
 	}
 
@@ -332,7 +333,16 @@ func RunPollCycleWith(ctx context.Context, cfg config.Config, store *state.Store
 	for o := range outcomes {
 		if o.result.Error != nil {
 			slog.Error("review failed", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", o.result.Error)
-			finishAttempt(store, o.work, o.result.Error)
+			if ctx.Err() != nil {
+				// Interrupted by shutdown, not a property of the PR: the run
+				// stays counted in the daily budget but doesn't move the head
+				// toward being parked.
+				if err := store.RevertAttempt(o.work.repo.Name, o.work.pr.Number, o.work.pr.HeadOID); err != nil {
+					slog.Error("failed to revert interrupted attempt", "repo", o.work.repo.Name, "pr", o.work.pr.Number, "error", err)
+				}
+			} else {
+				finishAttempt(store, o.work, o.result.Error)
+			}
 			result.Errors++
 			continue
 		}

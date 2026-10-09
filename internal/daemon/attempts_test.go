@@ -21,6 +21,7 @@ func TestAttemptGate(t *testing.T) {
 		reason string
 	}{
 		{name: "never tried", found: false, wantOK: true},
+		{name: "record with zero attempts", a: state.Attempt{Attempts: 0, LastAttemptAt: now}, found: true, wantOK: true},
 		{name: "succeeded", a: state.Attempt{Attempts: 1, Succeeded: true, LastAttemptAt: now.Add(-48 * time.Hour)}, found: true, reason: "already reviewed"},
 		{name: "first failure, inside backoff", a: state.Attempt{Attempts: 1, LastAttemptAt: now.Add(-5 * time.Minute)}, found: true, reason: "backing off"},
 		{name: "first failure, backoff over", a: state.Attempt{Attempts: 1, LastAttemptAt: now.Add(-11 * time.Minute)}, found: true, wantOK: true},
@@ -73,7 +74,9 @@ func TestRunPollCycleWith_FailedRunIsCountedAndBacksOff(t *testing.T) {
 
 	// A new head starts clean even while the old one is parked.
 	for i := 0; i < maxAttemptsPerHead; i++ {
-		store.BeginAttempt("o/r", 7, "h1")
+		if err := store.BeginAttempt("o/r", 7, "h1"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	fetcher.prs["o/r"][0].HeadOID, fetcher.prs["o/r"][0].CommitOIDs = "h2", []string{"h1", "h2"}
 	if r3 := RunPollCycleWith(context.Background(), cfg, store, nil, fetcher); r3.Errors != 1 {
@@ -86,8 +89,12 @@ func TestRunPollCycleWith_FailedRunIsCountedAndBacksOff(t *testing.T) {
 func TestRunPollCycleWith_SucceededHeadNotRetried(t *testing.T) {
 	store := testStore(t)
 	cfg := testConfig(config.RepoConfig{Name: "o/r", Path: missingRepo, Mode: config.ModeDryRun})
-	store.BeginAttempt("o/r", 8, "h1")
-	store.FinishAttempt("o/r", 8, "h1", true, "")
+	if err := store.BeginAttempt("o/r", 8, "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishAttempt("o/r", 8, "h1", true, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	fetcher := mockFetcher{prs: map[string][]github.PullRequest{
 		"o/r": {{Repo: "o/r", Number: 8, HeadOID: "h1", CommitOIDs: []string{"h1"}}},
