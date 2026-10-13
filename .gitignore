@@ -7,3 +7,6 @@ bin/
 # Local Claude Code settings and agent planning docs
 .claude/settings.local.json
 docs/superpowers/
+
+# Python bytecode from running scripts/
+__pycache__/
